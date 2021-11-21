@@ -1,0 +1,8 @@
+[package]
+name = "co"
+description = "An asynchronous scripting language"
+authors = ["Joey Territo <jtt9340@rit.edu>"]
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
