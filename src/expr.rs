@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::fmt::{Debug, Formatter, Write};
 
 pub type Identifier = String;
 
@@ -103,10 +103,16 @@ pub enum Statement {
     },
     /// If statement. Evaluates `condition` and runs the given `Vec` of statements if the `condition`
     /// is true.
-    If { condition: Expr, body: Vec<Expr> },
+    If {
+        condition: Expr,
+        body: Vec<Statement>,
+    },
     /// While loop. Evaluates `condition` and runs the given `Vec` of statements if the `condition`
     /// is true. Repeats execution until the `condition` is false.
-    While { condition: Expr, body: Vec<Expr> },
+    While {
+        condition: Expr,
+        body: Vec<Statement>,
+    },
     /// Function definition, including the name of the function, a list of zero or more parameters,
     /// and body containing zero or more statements.
     FunctionDefinition {
@@ -124,6 +130,73 @@ pub enum Statement {
     /// Spawn statement for executing the evaluation of an expression in another thread of
     /// computation.
     Spawn(Expr),
+}
+
+fn stringify_control_structure<'a>(
+    name: &str,
+    cond: &Expr,
+    body: impl IntoIterator<Item = &'a Statement>,
+) -> String {
+    let mut stmt = format!("{} ({}) {{\n", name, cond);
+    for line in body.into_iter() {
+        let stmt_s = line.to_string();
+        for l in stmt_s.lines() {
+            stmt.push('\t');
+            stmt.push_str(l);
+            stmt.push('\n');
+        }
+    }
+    stmt + "}"
+}
+
+impl std::fmt::Display for Statement {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use Statement::*;
+
+        match self {
+            Expr(e) => write!(f, "{};", e),
+            Variable { name, init } => write!(f, "var {} = {};", name, init),
+            Assignment {
+                variable: var,
+                new_value,
+            } => write!(f, "{} = {};", var, new_value),
+            If {
+                condition: cond,
+                body,
+            } => write!(f, "{}", stringify_control_structure("if", cond, body)),
+            While {
+                condition: cond,
+                body,
+            } => write!(f, "{}", stringify_control_structure("while", cond, body)),
+            FunctionDefinition {
+                name,
+                params: args,
+                body,
+            } => {
+                let mut func_def = format!("function {}(", name);
+                for (idx, arg) in args.into_iter().enumerate() {
+                    func_def.push_str(&arg);
+                    if idx < args.len() - 1 {
+                        func_def.push_str(", ");
+                    }
+                }
+                func_def.push_str(") {\n");
+                for line in body.into_iter() {
+                    let stmt_s = line.to_string();
+                    for l in stmt_s.lines() {
+                        func_def.push('\t');
+                        func_def.push_str(l);
+                        func_def.push('\n');
+                    }
+                }
+                write!(f, "{}}}", func_def)
+            }
+            Return(Some(val)) => write!(f, "return {};", val),
+            Return(None) => f.write_str("return;"),
+            Yield => f.write_str("yield;"),
+            Spawn(e) => write!(f, "spawn {};", e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +268,12 @@ mod tests {
     }
 
     #[test]
+    fn fmt_unm_expr() {
+        let unary_minus = Expr::UnaryMinus(Identifier::from("b"));
+        assert_eq!(&unary_minus.to_string(), "-b");
+    }
+
+    #[test]
     fn fmt_bin_expr() {
         let bin_expr = Expr::Binary(
             BinOp::Plus,
@@ -240,5 +319,122 @@ mod tests {
     fn fmt_recv_expr() {
         let recv = Expr::Receive(Box::new(Expr::Variable(Identifier::from("chan"))));
         assert_eq!(&recv.to_string(), "<- chan");
+    }
+
+    #[test]
+    fn fmt_expr_stmt() {
+        let stmt = Statement::Expr(Expr::Binary(
+            BinOp::Plus,
+            Box::new(Expr::Num(1.0)),
+            Box::new(Expr::Num(2.0)),
+        ));
+        assert_eq!(&stmt.to_string(), "(1 + 2);");
+    }
+
+    #[test]
+    fn fmt_var_decl() {
+        let decl = Statement::Variable {
+            name: Identifier::from("a"),
+            init: Expr::Num(1.0),
+        };
+        assert_eq!(&decl.to_string(), "var a = 1;");
+    }
+
+    #[test]
+    fn fmt_assignment_stmt() {
+        let stmt = Statement::Assignment {
+            variable: Identifier::from("a"),
+            new_value: Expr::Num(5.0),
+        };
+        assert_eq!(&stmt.to_string(), "a = 5;");
+    }
+
+    #[test]
+    fn fmt_if_stmt() {
+        let if_stmt = Statement::If {
+            condition: Expr::Bool(true),
+            body: vec![Statement::Expr(Expr::Num(4.0))],
+        };
+        assert_eq!(
+            &if_stmt.to_string(),
+            "if (true) {\n\
+        \t4;\n\
+        }"
+        );
+
+        let nested_if_stmt = Statement::If {
+            condition: Expr::Bool(true),
+            body: vec![if_stmt],
+        };
+        assert_eq!(
+            &nested_if_stmt.to_string(),
+            "if (true) {\n\
+        \tif (true) {\n\
+        \t\t4;\n\
+        \t}\n\
+        }"
+        );
+    }
+
+    #[test]
+    fn fmt_while_loop() {
+        let while_loop = Statement::While {
+            condition: Expr::Bool(true),
+            body: vec![Statement::While {
+                condition: Expr::Bool(true),
+                body: vec![Statement::Expr(Expr::Num(34.0))],
+            }],
+        };
+        assert_eq!(
+            &while_loop.to_string(),
+            "while (true) {\n\
+        \twhile (true) {\n\
+        \t\t34;\n\
+        \t}\n\
+        }"
+        )
+    }
+
+    #[test]
+    fn fmt_func_def() {
+        let func_def = Statement::FunctionDefinition {
+            name: Identifier::from("foo"),
+            params: vec![Identifier::from("a"), Identifier::from("b")],
+            body: vec![Statement::Return(Some(Expr::Binary(
+                BinOp::Plus,
+                Box::new(Expr::Variable(Identifier::from("a"))),
+                Box::new(Expr::Variable(Identifier::from("b"))),
+            )))],
+        };
+        assert_eq!(
+            &func_def.to_string(),
+            "function foo(a, b) {\n\
+        \treturn (a + b);\n\
+        }"
+        );
+    }
+
+    #[test]
+    fn fmt_return() {
+        let void_return = Statement::Return(None);
+        assert_eq!(&void_return.to_string(), "return;");
+
+        let value_return = Statement::Return(Some(Expr::Variable(Identifier::from('e'))));
+        assert_eq!(&value_return.to_string(), "return e;");
+    }
+
+    #[test]
+    fn fmt_yield() {
+        let yield_stmt = Statement::Yield;
+        assert_eq!(&yield_stmt.to_string(), "yield;");
+    }
+
+    #[test]
+    fn fmt_spawn() {
+        let spawn = Statement::Spawn(Expr::Call(
+            Identifier::from("producer"),
+            vec![Expr::Num(3.0)],
+        ));
+        assert_eq!(&spawn.to_string(), "spawn producer(3);");
     }
 }
