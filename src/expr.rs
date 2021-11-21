@@ -130,6 +130,8 @@ pub enum Statement {
     /// Spawn statement for executing the evaluation of an expression in another thread of
     /// computation.
     Spawn(Expr),
+    /// Statement that sends an expression's value to a channel represented by an identifier.
+    Send(Expr, Identifier),
 }
 
 fn stringify_control_structure<'a>(
@@ -195,6 +197,7 @@ impl std::fmt::Display for Statement {
             Return(None) => f.write_str("return;"),
             Yield => f.write_str("yield;"),
             Spawn(e) => write!(f, "spawn {};", e),
+            Send(expr, chan) => write!(f, "{} -> {};", expr, chan),
         }
     }
 }
@@ -436,5 +439,18 @@ mod tests {
             vec![Expr::Num(3.0)],
         ));
         assert_eq!(&spawn.to_string(), "spawn producer(3);");
+    }
+
+    #[test]
+    fn fmt_send() {
+        let send = Statement::Send(
+            Expr::Binary(
+                BinOp::Plus,
+                Box::new(Expr::Num(1.0)),
+                Box::new(Expr::Call(Identifier::from("square"), vec![Expr::Num(3.0)])),
+            ),
+            Identifier::from("someChannel"),
+        );
+        assert_eq!(&send.to_string(), "(1 + square(3)) -> someChannel;");
     }
 }
