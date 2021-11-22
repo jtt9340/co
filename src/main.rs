@@ -1,4 +1,4 @@
-mod expr;
+mod ast;
 
 fn main() {
     println!("Hello, world!");
