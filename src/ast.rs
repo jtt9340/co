@@ -70,9 +70,19 @@ impl std::fmt::Display for Expr {
             Variable(ident) => write!(f, "{}", ident),
             UnaryMinus(ident) => write!(f, "-{}", ident),
             Binary(op, lhs, rhs) => {
-                let bin_op_s = format!("({} {} {})", lhs, op, rhs);
-                // let bin_op_s = bin_op_s.trim_matches(|c| c == '(' || c == ')');
-                f.write_str(&bin_op_s)
+                let lhs_s = if let Binary(_, _, _) = lhs.as_ref() {
+                    format!("({})", lhs)
+                } else {
+                    format!("{}", lhs)
+                };
+
+                let rhs_s = if let Binary(_, _, _) = rhs.as_ref() {
+                    format!("({})", rhs)
+                } else {
+                    format!("{}", rhs)
+                };
+
+                write!(f, "{} {} {}", lhs_s, op, rhs_s)
             }
             Call(fname, args) => write!(
                 f,
@@ -283,7 +293,7 @@ mod tests {
             Box::new(Expr::Num(2.0)),
             Box::new(Expr::Num(3.0)),
         );
-        assert_eq!(&bin_expr.to_string(), "(2 + 3)");
+        assert_eq!(&bin_expr.to_string(), "2 + 3");
 
         let bin_expr = Expr::Binary(
             BinOp::Minus,
@@ -302,7 +312,7 @@ mod tests {
                 )),
             )),
         );
-        assert_eq!(&bin_expr.to_string(), "((b * b) - (4 * (a * c)))");
+        assert_eq!(&bin_expr.to_string(), "(b * b) - (4 * (a * c))");
     }
 
     #[test]
@@ -331,7 +341,7 @@ mod tests {
             Box::new(Expr::Num(1.0)),
             Box::new(Expr::Num(2.0)),
         ));
-        assert_eq!(&stmt.to_string(), "(1 + 2);");
+        assert_eq!(&stmt.to_string(), "1 + 2;");
     }
 
     #[test]
@@ -412,7 +422,7 @@ mod tests {
         assert_eq!(
             &func_def.to_string(),
             "function foo(a, b) {\n\
-        \treturn (a + b);\n\
+        \treturn a + b;\n\
         }"
         );
     }
@@ -451,6 +461,6 @@ mod tests {
             ),
             Identifier::from("someChannel"),
         );
-        assert_eq!(&send.to_string(), "(1 + square(3)) -> someChannel;");
+        assert_eq!(&send.to_string(), "1 + square(3) -> someChannel;");
     }
 }
