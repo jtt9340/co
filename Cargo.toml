@@ -6,3 +6,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# PEG parser combinators using operator overloading without macros
+pom = "3.2.0"
