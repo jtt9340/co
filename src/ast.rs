@@ -88,10 +88,10 @@ impl std::fmt::Display for Expr {
                 f,
                 "{}({})",
                 fname,
-                args.into_iter()
+                args.iter()
                     .map(|arg| format!("{}", arg))
                     .collect::<Vec<_>>()
-                    .join(", ".into())
+                    .join(", ")
             ),
             Receive(expr) => write!(f, "<- {}", expr),
         }
@@ -186,14 +186,14 @@ impl std::fmt::Display for Statement {
                 body,
             } => {
                 let mut func_def = format!("function {}(", name);
-                for (idx, arg) in args.into_iter().enumerate() {
-                    func_def.push_str(&arg);
+                for (idx, arg) in args.iter().enumerate() {
+                    func_def.push_str(arg);
                     if idx < args.len() - 1 {
                         func_def.push_str(", ");
                     }
                 }
                 func_def.push_str(") {\n");
-                for line in body.into_iter() {
+                for line in body.iter() {
                     let stmt_s = line.to_string();
                     for l in stmt_s.lines() {
                         func_def.push('\t');
