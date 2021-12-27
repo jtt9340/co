@@ -43,7 +43,7 @@ pub enum Expr {
     Bool(bool),
     /// String literals.
     Str(String),
-    /// An integer literal.
+    /// An number literal.
     Num(f64),
     /// A bare word starting with an alphabetic character.
     /// Refers to the value of a variable at runtime.
