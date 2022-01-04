@@ -37,41 +37,6 @@ fn between<'a>(open: Parser<'a>, close: Parser<'a>) -> impl FnOnce(Parser<'a>) -
     |p| (open * p) - close
 }
 
-fn digits_to_number<I>(num_digits: usize, digits: I) -> u32
-where
-    I: IntoIterator<Item = char>,
-{
-    digits.into_iter().enumerate().fold(0, |acc, (i, digit)| {
-        acc + match digit {
-            '0' => 0,
-            '1' => 1,
-            '2' => 2,
-            '3' => 3,
-            '4' => 4,
-            '5' => 5,
-            '6' => 6,
-            '7' => 7,
-            '8' => 8,
-            '9' => 9,
-            _ => unreachable!(),
-        } * 10u32.pow((num_digits - i - 1) as u32)
-    })
-}
-
-fn digits_to_float(digits_before_decimal: Vec<char>, digits_after_decimal: Vec<char>) -> f64 {
-    let before_decimal_digit_count = digits_before_decimal.len();
-    let after_decimal_digit_count = digits_after_decimal.len();
-    let before_decimal = digits_to_number(before_decimal_digit_count, digits_before_decimal) as f64;
-    let after_decimal = digits_to_number(after_decimal_digit_count, digits_after_decimal) as f64;
-    before_decimal + after_decimal.powi(after_decimal_digit_count as i32 * -1)
-}
-
-/// Get a parser that recognizes a single decimal digit.
-fn digit<'a>() -> PomParser<'a, char, char> {
-    // The : char annotation is needed for the Rust compiler.
-    is_a(|c: char| c.is_digit(10))
-}
-
 /// The space consumer parser. This parser dictates what's ignored while parsing source code.
 /// "Space" is anything considered whitespace by [`char::is_whitespace`]. This parser also ignores
 /// single line comments (anything starting with `//` and ending at the end of a line) and block
@@ -128,49 +93,14 @@ pub fn string_lit<'a>() -> Parser<'a> {
 
 /// Get a parser that parses number literals.
 pub fn number<'a>() -> PomParser<'a, char, f64> {
-    // Adapted from the EBNF grammar given at the Rust documentation for f64's implementation of FromStr.
-    // TODO: Possibly swap out with a more efficient implementation (i.e. the Rust standard library)
-    let exp = (one_of("eE") * (symbol(&['+']) | symbol(&['-'])).opt() + digit().repeat(1..)).map(
-        |(sgn, digits)| {
-            let positive = sgn.map(|op| op == "+").unwrap_or(true);
-            let num_digits = digits.len();
-            let decimal = digits_to_number(num_digits, digits) as i32;
-            if positive {
-                decimal
-            } else {
-                -1 * decimal
-            }
-        },
-    );
-    let whole_number = digit()
-        .repeat(1..)
-        .map(|digits| digits_to_number(digits.len(), digits) as f64);
-    let frac_ge_1 = ((digit().repeat(1..) - sym('.')) + digit().repeat(0..))
-        .map(|(i, f)| digits_to_float(i, f));
-    let frac_lt_1 = ((digit().repeat(0..) - sym('.')) + digit().repeat(1..))
-        .map(|(i, f)| digits_to_float(i, f));
-    let number =
-        ((whole_number | frac_ge_1 | frac_lt_1) + exp.opt()).map(|(base, exp)| match exp {
-            Some(exp) => base.powi(exp),
-            None => base,
-        });
-    let inf_or_nan = (symbol(&['i', 'n', 'f']) | symbol(&['N', 'a', 'N'])).map(|lit| {
-        if lit == "inf" {
-            f64::INFINITY
-        } else if lit == "NaN" {
-            f64::NAN
-        } else {
-            unreachable!();
-        }
-    });
-    ((symbol(&['+']) | symbol(&['-'])).opt() + (inf_or_nan | number)).map(|(sgn, value)| {
-        let positive = sgn.map(|op| op == "+").unwrap_or(true);
-        if positive || value.is_nan() {
-            value
-        } else if value.is_infinite() {
-            f64::NEG_INFINITY
-        } else {
-            -1.0 * value
+    PomParser::new(move |input: &'a [char], start: usize| {
+        match fast_float::parse_partial::<f64, _>(String::from_iter(input.into_iter())) {
+            Ok((num, num_digits)) => Ok((num, start + num_digits)),
+            Err(e) => Err(pom::Error::Custom {
+                message: e.to_string(),
+                position: start,
+                inner: None,
+            }),
         }
     })
 }

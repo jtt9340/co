@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 # PEG parser combinators using operator overloading without macros
 pom = "3.2.0"
+# Fast floating-point number parser
+fast-float = "0.2.0"
