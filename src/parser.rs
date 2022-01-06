@@ -28,7 +28,9 @@ fn block_end<'a>() -> PomParser<'a, char, ()> {
 
 /// Get a parser than can parse nested block comments.
 fn block<'a>() -> PomParser<'a, char, ()> {
-    block_start() * any().repeat(0..) * call(block).opt() * any().repeat(0..) * block_end()
+    let skip_comment_char = (!block_end() * any()).discard();
+    let comment_content = (call(block) | skip_comment_char).repeat(0..).discard();
+    (block_start() * comment_content) - block_end()
 }
 
 /// Get a function that takes a parser and returns a parser that recognizes `open` followed by the
@@ -78,7 +80,7 @@ where
 /// comments (anything in between `/*` and `*/`). Block comments can be nested.
 pub fn sc<'a>() -> PomParser<'a, char, ()> {
     let sp = is_a(char::is_whitespace).discard();
-    let line = (line_start() * any().repeat(0..) * sym('\r').opt() * sym('\n')).discard();
+    let line = (line_start() * many_until(any(), sym('\r').opt() * sym('\n'))).discard();
     let block = block();
     (sp | line | block).repeat(0..).discard()
 }
