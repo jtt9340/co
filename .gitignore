@@ -1,4 +1,8 @@
+# Cargo output
 /target
 
 # Do I ever really want this?
 .idea/
+
+# macOS cruft
+.DS_Store
