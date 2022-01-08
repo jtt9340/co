@@ -6,3 +6,6 @@
 
 # macOS cruft
 .DS_Store
+
+# NixOS build result
+/result
