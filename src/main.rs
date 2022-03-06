@@ -1,13 +1,15 @@
 mod ast;
 mod parser;
 
-use std::io::{stdin, BufRead};
+use std::io::{stdin, stdout, BufRead, Write};
 
 fn main() {
+    let mut stdout = stdout();
     let stdin = stdin();
     let handle = stdin.lock();
 
     print!("> ");
+    stdout.flush().expect("failed to flush stdout");
     for buf in handle.lines().map(Result::unwrap) {
         let last_parser_char = buf.find(char::is_whitespace).unwrap_or(buf.len());
         let parser = &buf[..last_parser_char];
@@ -28,5 +30,6 @@ fn main() {
             }
         }
         print!("> ");
+        stdout.flush().expect("failed to flush stdout");
     }
 }
