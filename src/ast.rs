@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Formatter, Write};
+use std::fmt::{Formatter, Write};
 
 pub type Identifier = String;
 
@@ -31,6 +31,103 @@ impl std::fmt::Display for BinOp {
             LessThanEqual => f.write_str("<="),
             GreaterThan => f.write_char('>'),
             GreaterThanEqual => f.write_str(">="),
+        }
+    }
+}
+
+impl std::str::FromStr for BinOp {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut chars = s.chars();
+        let fst = match chars.next() {
+            Some(chr) => chr,
+            None => return Err("No characters to parse into a binary operator"),
+        };
+
+        match fst {
+            '+' => {
+                if chars.all(char::is_whitespace) {
+                    Ok(BinOp::Plus)
+                } else {
+                    Err("Extraneous characters in binary operator besides +")
+                }
+            },
+            '-' => {
+                // TODO: Do we need to handle -> ?
+                if chars.all(char::is_whitespace) {
+                    Ok(BinOp::Minus)
+                } else {
+                    Err("Extraneous characters in binary operator besides -")
+                }
+            }
+            '*' => {
+                if chars.all(char::is_whitespace) {
+                    Ok(BinOp::Times)
+                } else {
+                    Err("Extraneous characters in binary operator besides *")
+                }
+            }
+            '/' => {
+                if chars.all(char::is_whitespace) {
+                    Ok(BinOp::Divide)
+                } else {
+                    Err("Extraneous characters in binary operator besides /")
+                }
+            }
+            '=' => {
+                if let Some('=') = chars.next() {
+                    if chars.all(char::is_whitespace) {
+                        Ok(BinOp::Equals)
+                    } else {
+                        Err("Extraneous characters in binary operator besides ==")
+                    }
+                } else {
+                    Err("Unrecognized binary operator")
+                }
+            }
+            '!' => {
+                if let Some('=') = chars.next() {
+                    if chars.all(char::is_whitespace) {
+                        Ok(BinOp::NotEquals)
+                    } else {
+                        Err("Extraneous characters in binary operator besides !=")
+                    }
+                } else {
+                    Err("Unrecognized binary operator")
+                }
+            }
+            '<' => {
+                if let Some(snd) = chars.next() {
+                    if snd == '=' && chars.all(char::is_whitespace) {
+                        Ok(BinOp::LessThanEqual)
+                    } else if snd == '=' {
+                        Err("Extraneous characters in binary operator besides <=")
+                    } else if snd.is_whitespace() && chars.all(char::is_whitespace) {
+                        Ok(BinOp::LessThan)
+                    } else {
+                        Err("Extraneous characters in binary operator besides <")
+                    }
+                } else {
+                    Ok(BinOp::LessThan)
+                }
+            }
+            '>' => {
+                if let Some(snd) = chars.next() {
+                    if snd == '=' && chars.all(char::is_whitespace) {
+                        Ok(BinOp::GreaterThanEqual)
+                    } else if snd == '=' {
+                        Err("Extraneous characters in binary operator besides >=")
+                    } else if snd.is_whitespace() && chars.all(char::is_whitespace) {
+                       Ok(BinOp::GreaterThan) 
+                    } else {
+                        Err("Extraneous characters in binary operator besides >")
+                    }
+                } else {
+                    Ok(BinOp::GreaterThan)
+                }
+            }
+            _ => Err("Unrecognized binary operator"),
         }
     }
 }
@@ -215,6 +312,7 @@ impl std::fmt::Display for Statement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::array::IntoIter;
     use std::collections::HashMap;
 
     #[test]
@@ -235,6 +333,30 @@ mod tests {
 
         for (bin_op, expected) in expected {
             assert_eq!(&bin_op.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn parse_bin_op() {
+        let expected = HashMap::from([
+            (BinOp::Plus, "+    "),
+            (BinOp::Minus, "-   "),
+            (BinOp::Times, "*     "),
+            (BinOp::Divide, "/      "),
+            (BinOp::Equals, "==   "),
+            (BinOp::NotEquals, "!=   "),
+            (BinOp::LessThan, "<    "),
+            (BinOp::LessThanEqual, "<=    "),
+            (BinOp::GreaterThan, ">     "),
+            (BinOp::GreaterThanEqual, ">=   "),
+        ]);
+
+        for (bin_op, s) in expected {
+            assert_eq!(Ok(bin_op), s.parse());
+        }
+
+        for bad_case in IntoIter::new(["+    ~", "->", "** ", " &", "!?", "=!  ", "<   = "]) {
+            assert!(bad_case.parse::<BinOp>().is_err());
         }
     }
 
