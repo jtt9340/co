@@ -2,7 +2,7 @@ use std::fmt::{Formatter, Write};
 
 pub type Identifier = String;
 
-#[derive(Eq, PartialEq, Debug, Hash)]
+#[derive(Eq, PartialEq, Debug, Hash, Clone, Copy)]
 pub enum BinOp {
     Plus,
     Minus,
@@ -52,7 +52,7 @@ impl std::str::FromStr for BinOp {
                 } else {
                     Err("Extraneous characters in binary operator besides +")
                 }
-            },
+            }
             '-' => {
                 // TODO: Do we need to handle -> ?
                 if chars.all(char::is_whitespace) {
@@ -119,7 +119,7 @@ impl std::str::FromStr for BinOp {
                     } else if snd == '=' {
                         Err("Extraneous characters in binary operator besides >=")
                     } else if snd.is_whitespace() && chars.all(char::is_whitespace) {
-                       Ok(BinOp::GreaterThan) 
+                        Ok(BinOp::GreaterThan)
                     } else {
                         Err("Extraneous characters in binary operator besides >")
                     }
@@ -132,7 +132,7 @@ impl std::str::FromStr for BinOp {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
     /// The literal `null`. Evaluates to the null value.
     Null,

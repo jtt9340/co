@@ -1,14 +1,17 @@
 use pom::parser::{Parser as PomParser, *};
 
+use std::collections::HashMap;
 use std::iter::once;
 
-use crate::ast::Identifier;
+use crate::ast::{BinOp, Expr, Identifier};
 
 /// Type alias for a [`pom::parser::Parser`] that parses streams of [`char`]aracters and outputs
 /// [`String`]s.
 ///
 /// The lifetime parameter `'a` is the lifetime of the data source being parsed.
 pub type Parser<'a> = pom::parser::Parser<'a, char, String>;
+
+type PrecedenceScore = i16;
 
 /// Get a parser that parses the start of a single-line comment: `//`.
 fn line_start<'a>() -> PomParser<'a, char, ()> {
@@ -104,8 +107,8 @@ pub fn parens(p: Parser) -> Parser {
 }
 
 /// Get a parser that parses a bracketed parser. That is, a parser that wraps the given parser to
-/// expect an opening curly bracket ({), a string recognized by the given parser, then a closing
-/// curly bracket (}).
+/// expect an opening curly bracket (`{`), a string recognized by the given parser, then a closing
+/// curly bracket (`}`).
 pub fn braces(p: Parser) -> Parser {
     between(symbol(&['{']), symbol(&['}']))(p)
 }
@@ -246,36 +249,183 @@ pub fn string_lit<'a>() -> Parser<'a> {
     .map(Some);
     let escape = sym('\\') * (charesc | ascii | decimal | octal | hexadecimal);
     let r#char = escape | any().map(Some);
-    (one_of("\'\"") + many_until(r#char, one_of("\'\""))).convert(|(open, (string, close))| {
-        if open == close {
-            Ok(String::from_iter(
-                string
-                    .into_iter()
-                    .filter(Option::is_some)
-                    // We know it is safe to call Option::unwrap since we only select the Option<char>s
-                    // from `string` are that Some, so unwrap cannot panic.
-                    .map(Option::unwrap),
-            ))
-        } else {
-            Err(format!(
-                "Invalid string literal: string was opened with {} but closed with {}",
-                open, close
-            ))
-        }
-    }) - sc()
+    lexeme(one_of("\'\"") + many_until(r#char, one_of("\'\""))).convert(
+        |(open, (string, close))| {
+            if open == close {
+                Ok(String::from_iter(
+                    string
+                        .into_iter()
+                        .filter(Option::is_some)
+                        // We know it is safe to call Option::unwrap since we only select the Option<char>s
+                        // from `string` are that Some, so unwrap cannot panic.
+                        .map(Option::unwrap),
+                ))
+            } else {
+                Err(format!(
+                    "Invalid string literal: string was opened with {} but closed with {}",
+                    open, close
+                ))
+            }
+        },
+    )
 }
 
 /// Get a parser that parses number literals.
 pub fn number<'a>() -> PomParser<'a, char, f64> {
-    PomParser::new(move |input: &'a [char], start: usize| {
-        match fast_float::parse_partial::<f64, _>(String::from_iter(input.into_iter())) {
+    lexeme(PomParser::new(
+        move |input: &'a [char], start: usize| match fast_float::parse_partial::<f64, _>(
+            String::from_iter(input.into_iter().skip(start)),
+        ) {
             Ok((num, num_digits)) => Ok((num, start + num_digits)),
             Err(e) => Err(pom::Error::Custom {
                 message: e.to_string(),
                 position: start,
                 inner: None,
             }),
+        },
+    ))
+}
+
+pub fn term<'a>() -> PomParser<'a, char, Expr> {
+    PomParser::new(move |input: &'a [char], start: usize| {
+        // First attempt to parse null literals
+        if let Ok((_null, new_pos)) = symbol(&['n', 'u', 'l', 'l']).parse_at(input, start) {
+            return Ok((Expr::Null, new_pos));
         }
+
+        // Then "true"
+        if let Ok((_true, new_pos)) = symbol(&['t', 'r', 'u', 'e']).parse_at(input, start) {
+            return Ok((Expr::Bool(true), new_pos));
+        }
+
+        // Then "false"
+        if let Ok((_false, new_pos)) = symbol(&['f', 'a', 'l', 's', 'e']).parse_at(input, start) {
+            return Ok((Expr::Bool(false), new_pos));
+        }
+
+        // Then a string literal
+        if let Ok((string, new_pos)) = string_lit().parse_at(input, start) {
+            return Ok((Expr::Str(string), new_pos));
+        }
+
+        // Then a numeric literal
+        if let Ok((num, new_pos)) = number().parse_at(input, start) {
+            return Ok((Expr::Num(num), new_pos));
+        }
+
+        // Then a function call expression
+        let args = (expr().opt() + (lexeme(sym(',')) * expr()).repeat(0..)).map(|(fst, rest)| {
+            fst.into_iter()
+                .chain(rest.into_iter())
+                .collect::<Vec<Expr>>()
+        });
+        if let Ok(((func, args), new_pos)) =
+            ((identifier() - symbol(&['('])) + (args - symbol(&[')']))).parse_at(input, start)
+        {
+            return Ok((Expr::Call(func, args), new_pos));
+        }
+
+        // Then an identifier
+        if let Ok(((unm, ident), new_pos)) =
+            (lexeme(sym('-')).opt() + identifier()).parse_at(input, start)
+        {
+            return match unm {
+                Some(op) => {
+                    debug_assert_eq!(op, '-');
+                    Ok((Expr::UnaryMinus(ident), new_pos))
+                }
+                None => Ok((Expr::Variable(ident), new_pos)),
+            };
+        }
+
+        // Finally, a parenthesized expression
+        if let Ok((expr, new_pos)) =
+            ((symbol(&['(']) * expr()) - symbol(&[')'])).parse_at(input, start)
+        {
+            return Ok((expr, new_pos));
+        }
+
+        // None of the above
+        Err(pom::Error::Custom {
+            message: "Unrecognized term".into(),
+            position: start,
+            inner: None,
+        })
+    })
+}
+
+fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, Expr> {
+    // TODO: Figure out a way to not have to create this HashMap every time the function is called
+    let binop_precedence = HashMap::from([
+        ("==", 10),
+        ("!=", 10),
+        ("<", 20),
+        (">", 20),
+        ("<=", 20),
+        (">=", 20),
+        ("+", 30),
+        ("-", 30),
+        ("*", 40),
+        ("/", 40),
+    ]);
+
+    let binop = || {
+        symbol(&['*'])
+            | symbol(&['/'])
+            | symbol(&['+'])
+            | symbol(&['-']) - !symbol(&['>'])
+            | symbol(&['<', '='])
+            | symbol(&['>', '='])
+            | symbol(&['<'])
+            | symbol(&['>'])
+            | symbol(&['=', '='])
+            | symbol(&['!', '='])
+    };
+
+    PomParser::new(move |input: &'a [char], mut start: usize| {
+        let mut lhs = expr.clone();
+
+        // Since a binary expression can contain multiple
+        // sub-expressions, we loop until we parse them all.
+        loop {
+            let (bin_op, new_pos) = match binop().parse_at(input, start) {
+                Ok((bin_op, new_pos)) => (bin_op, new_pos),
+                Err(_) => return Ok((lhs, start)),
+            };
+            let tok_prec = binop_precedence[bin_op.as_str()];
+
+            if tok_prec < expr_prec {
+                return Ok((lhs, start));
+            }
+
+            let (mut rhs, new_pos) = term().parse_at(input, new_pos)?;
+
+            let (new_pos, next_prec) = binop().parse_at(input, new_pos).map_or_else(
+                |_| (new_pos, -1),
+                |(cur_tok, new_pos)| (new_pos, binop_precedence[cur_tok.as_str()]),
+            );
+
+            start = new_pos;
+
+            if tok_prec < next_prec {
+                let rhs_pos_pair = binop_rhs(tok_prec + 1, rhs).parse_at(input, new_pos)?;
+                rhs = rhs_pos_pair.0;
+                start = new_pos;
+            }
+
+            lhs = Expr::Binary(
+                bin_op.parse::<BinOp>().unwrap(),
+                Box::new(lhs),
+                Box::new(rhs),
+            );
+        }
+    })
+}
+
+pub fn expr<'a>() -> PomParser<'a, char, Expr> {
+    PomParser::new(move |input: &'a [char], start: usize| {
+        let (lhs, new_pos) = term().parse_at(input, start)?;
+        binop_rhs(0, lhs).parse_at(input, new_pos)
     })
 }
 

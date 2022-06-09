@@ -24,8 +24,9 @@ fn main() {
             "identifier" => println!("{:?}", parser::identifier().parse(&input)),
             "stringLiteral" => println!("{:?}", parser::string_lit().parse(&input)),
             "number" => println!("{:?}", parser::number().parse(&input)),
+            "expr" => println!("{:#?}", parser::expr().parse(&input)),
             p => {
-                eprintln!("Unrecognized parser \"{}\". Options are: spaceConsumer, identifier, stringLiteral, or number", p);
+                eprintln!("Unrecognized parser \"{}\". Options are: spaceConsumer, identifier, stringLiteral, number, or expr", p);
                 continue;
             }
         }
