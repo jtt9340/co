@@ -252,14 +252,7 @@ pub fn string_lit<'a>() -> Parser<'a> {
     lexeme(one_of("\'\"") + many_until(r#char, one_of("\'\""))).convert(
         |(open, (string, close))| {
             if open == close {
-                Ok(String::from_iter(
-                    string
-                        .into_iter()
-                        .filter(Option::is_some)
-                        // We know it is safe to call Option::unwrap since we only select the Option<char>s
-                        // from `string` are that Some, so unwrap cannot panic.
-                        .map(Option::unwrap),
-                ))
+                Ok(String::from_iter(string.into_iter().flatten()))
             } else {
                 Err(format!(
                     "Invalid string literal: string was opened with {} but closed with {}",
@@ -274,7 +267,7 @@ pub fn string_lit<'a>() -> Parser<'a> {
 pub fn number<'a>() -> PomParser<'a, char, f64> {
     lexeme(PomParser::new(
         move |input: &'a [char], start: usize| match fast_float::parse_partial::<f64, _>(
-            String::from_iter(input.into_iter().skip(start)),
+            String::from_iter(input.iter().skip(start)),
         ) {
             Ok((num, num_digits)) => Ok((num, start + num_digits)),
             Err(e) => Err(pom::Error::Custom {
@@ -373,7 +366,7 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
         symbol(&['*'])
             | symbol(&['/'])
             | symbol(&['+'])
-            | symbol(&['-']) - !symbol(&['>'])
+            | (symbol(&['-']) - !symbol(&['>']))
             | symbol(&['<', '='])
             | symbol(&['>', '='])
             | symbol(&['<'])

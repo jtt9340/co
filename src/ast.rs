@@ -1,4 +1,4 @@
-use std::fmt::{Formatter, Write};
+use std::fmt::{self, Formatter, Write};
 
 pub type Identifier = String;
 
@@ -16,8 +16,8 @@ pub enum BinOp {
     GreaterThanEqual,
 }
 
-impl std::fmt::Display for BinOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         use BinOp::*;
 
         match self {
@@ -155,8 +155,8 @@ pub enum Expr {
     Receive(Box<Expr>),
 }
 
-impl std::fmt::Display for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         use Expr::*;
 
         match self {
@@ -258,8 +258,8 @@ fn stringify_control_structure<'a>(
     stmt + "}"
 }
 
-impl std::fmt::Display for Statement {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         use Statement::*;
 
         match self {
