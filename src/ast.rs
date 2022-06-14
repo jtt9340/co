@@ -1,4 +1,5 @@
 use std::fmt::{self, Formatter, Write};
+use std::str::FromStr;
 
 pub type Identifier = String;
 
@@ -35,7 +36,7 @@ impl fmt::Display for BinOp {
     }
 }
 
-impl std::str::FromStr for BinOp {
+impl FromStr for BinOp {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -132,6 +133,66 @@ impl std::str::FromStr for BinOp {
     }
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Copy)]
+pub enum UnaryOp {
+    Plus,
+    Minus,
+    Receive,
+}
+
+impl fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use UnaryOp::*;
+
+        match self {
+            Plus => f.write_char('+'),
+            Minus => f.write_char('-'),
+            Receive => f.write_str("<-"),
+        }
+    }
+}
+
+impl FromStr for UnaryOp {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut chars = s.chars();
+        let fst = match chars.next() {
+            Some(chr) => chr,
+            None => return Err("No characters to parse into a unary operator"),
+        };
+
+        match fst {
+            '+' => {
+                if chars.all(char::is_whitespace) {
+                    Ok(UnaryOp::Plus)
+                } else {
+                    Err("Extraneous characters in unary operator besides +")
+                }
+            }
+            '-' => {
+                if chars.all(char::is_whitespace) {
+                    Ok(UnaryOp::Minus)
+                } else {
+                    Err("Extraneous characters in unary operator besides -")
+                }
+            }
+            '<' => {
+                if let Some('-') = chars.next() {
+                    if chars.all(char::is_whitespace) {
+                        Ok(UnaryOp::Receive)
+                    } else {
+                        Err("Extraneous characters in unary operator besides <-")
+                    }
+                } else {
+                    Err("Unrecognized unary operator")
+                }
+            }
+            _ => Err("Unrecognized unary operator"),
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
     /// The literal `null`. Evaluates to the null value.
@@ -145,14 +206,12 @@ pub enum Expr {
     /// A bare word starting with an alphabetic character.
     /// Refers to the value of a variable at runtime.
     Variable(Identifier),
-    /// The unary negation of an identifier, such as `-b`.
-    UnaryMinus(Identifier),
+    /// A unary operator applied to an expression.
+    Unary(UnaryOp, Box<Expr>),
     /// A binary operation on two expressions.
     Binary(BinOp, Box<Expr>, Box<Expr>),
     /// A function call.
     Call(Identifier, Vec<Expr>),
-    /// Expression for receiving a value from a channel.
-    Receive(Box<Expr>),
 }
 
 impl fmt::Display for Expr {
@@ -165,7 +224,7 @@ impl fmt::Display for Expr {
             Str(s) => write!(f, "\"{}\"", s),
             Num(n) => write!(f, "{}", n),
             Variable(ident) => write!(f, "{}", ident),
-            UnaryMinus(ident) => write!(f, "-{}", ident),
+            Unary(op, expr) => write!(f, "{}{}", op, expr),
             Binary(op, lhs, rhs) => {
                 let lhs_s = if let Binary(_, _, _) = lhs.as_ref() {
                     format!("({})", lhs)
@@ -190,7 +249,6 @@ impl fmt::Display for Expr {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Receive(expr) => write!(f, "<- {}", expr),
         }
     }
 }
@@ -355,7 +413,9 @@ mod tests {
             assert_eq!(Ok(bin_op), s.parse());
         }
 
-        for bad_case in IntoIter::new(["+    ~", "->", "** ", " &", "!?", "=!  ", "<   = "]) {
+        for bad_case in
+            IntoIterator::into_iter(["+    ~", "->", "** ", " &", "!?", "=!  ", "<   = "])
+        {
             assert!(bad_case.parse::<BinOp>().is_err());
         }
     }
@@ -404,7 +464,10 @@ mod tests {
 
     #[test]
     fn fmt_unm_expr() {
-        let unary_minus = Expr::UnaryMinus(Identifier::from("b"));
+        let unary_minus = Expr::Unary(
+            UnaryOp::Minus,
+            Box::new(Expr::Variable(Identifier::from("b"))),
+        );
         assert_eq!(&unary_minus.to_string(), "-b");
     }
 
@@ -452,8 +515,11 @@ mod tests {
 
     #[test]
     fn fmt_recv_expr() {
-        let recv = Expr::Receive(Box::new(Expr::Variable(Identifier::from("chan"))));
-        assert_eq!(&recv.to_string(), "<- chan");
+        let recv = Expr::Unary(
+            UnaryOp::Receive,
+            Box::new(Expr::Variable(Identifier::from("chan"))),
+        );
+        assert_eq!(&recv.to_string(), "<-chan");
     }
 
     #[test]

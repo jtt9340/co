@@ -3,7 +3,7 @@ use pom::parser::{Parser as PomParser, *};
 use std::collections::HashMap;
 use std::iter::once;
 
-use crate::ast::{BinOp, Expr, Identifier};
+use crate::ast::{BinOp, Expr, Identifier, UnaryOp};
 
 /// Type alias for a [`pom::parser::Parser`] that parses streams of [`char`]aracters and outputs
 /// [`String`]s.
@@ -279,7 +279,7 @@ pub fn number<'a>() -> PomParser<'a, char, f64> {
     ))
 }
 
-pub fn term<'a>() -> PomParser<'a, char, Expr> {
+fn term<'a>() -> PomParser<'a, char, Expr> {
     PomParser::new(move |input: &'a [char], start: usize| {
         // First attempt to parse null literals
         if let Ok((_null, new_pos)) = symbol(&['n', 'u', 'l', 'l']).parse_at(input, start) {
@@ -319,16 +319,8 @@ pub fn term<'a>() -> PomParser<'a, char, Expr> {
         }
 
         // Then an identifier
-        if let Ok(((unm, ident), new_pos)) =
-            (lexeme(sym('-')).opt() + identifier()).parse_at(input, start)
-        {
-            return match unm {
-                Some(op) => {
-                    debug_assert_eq!(op, '-');
-                    Ok((Expr::UnaryMinus(ident), new_pos))
-                }
-                None => Ok((Expr::Variable(ident), new_pos)),
-            };
+        if let Ok((ident, new_pos)) = identifier().parse_at(input, start) {
+            return Ok((Expr::Variable(ident), new_pos));
         }
 
         // Finally, a parenthesized expression
@@ -344,6 +336,69 @@ pub fn term<'a>() -> PomParser<'a, char, Expr> {
             position: start,
             inner: None,
         })
+    })
+}
+
+fn is_operator_char(c: char) -> bool {
+    !c.is_ascii_alphanumeric() && !" \"(,".contains(c)
+}
+
+pub fn unary<'a>() -> PomParser<'a, char, Expr> {
+    PomParser::new(move |input: &'a [char], start: usize| {
+        if let Some(&cur_tok) = input.get(start) {
+            let term_idx = input
+                .iter()
+                .skip(start)
+                .enumerate()
+                .find(|(idx, &chr)| !is_operator_char(chr))
+                .map(|(idx, _)| idx)
+                .unwrap_or_else(|| input.len() - 1);
+
+            if !is_operator_char(cur_tok) {
+                return term().parse_at(input, start);
+            }
+
+            let mut index = 0;
+            loop {
+                let pos = start + index;
+                if index == term_idx + 1 {
+                    return Err(pom::Error::Mismatch {
+                        message: format!(
+                            "Unrecognized unary operator: {:?}",
+                            &input[start..(pos - 1)],
+                        ),
+                        position: pos,
+                    });
+                }
+
+                if let Ok(unary_op) =
+                    String::from_iter(input.into_iter().skip(start).take(index)).parse::<UnaryOp>()
+                {
+                    let non_whitespace_idx = input
+                        .iter()
+                        .skip(pos)
+                        .enumerate()
+                        .find(|(idx, &chr)| !chr.is_ascii_whitespace())
+                        .map(|(idx, _)| pos + idx)
+                        .unwrap_or_else(|| input.len());
+
+                    return match call(unary).parse_at(input, non_whitespace_idx) {
+                        Ok((operand, new_pos)) => {
+                            Ok((Expr::Unary(unary_op, Box::new(operand)), new_pos))
+                        }
+                        Err(e) => Err(pom::Error::Custom {
+                            message: format!("Invalid operand following {}", unary_op),
+                            position: non_whitespace_idx,
+                            inner: Some(Box::new(e)),
+                        }),
+                    };
+                }
+
+                index += 1;
+            }
+        }
+
+        Err(pom::Error::Incomplete)
     })
 }
 
@@ -391,7 +446,7 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
                 return Ok((lhs, start));
             }
 
-            let (mut rhs, new_pos) = term().parse_at(input, new_pos)?;
+            let (mut rhs, new_pos) = unary().parse_at(input, new_pos)?;
 
             let (new_pos, next_prec) = binop().parse_at(input, new_pos).map_or_else(
                 |_| (new_pos, -1),
@@ -417,7 +472,7 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
 
 pub fn expr<'a>() -> PomParser<'a, char, Expr> {
     PomParser::new(move |input: &'a [char], start: usize| {
-        let (lhs, new_pos) = term().parse_at(input, start)?;
+        let (lhs, new_pos) = unary().parse_at(input, start)?;
         binop_rhs(0, lhs).parse_at(input, new_pos)
     })
 }
