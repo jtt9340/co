@@ -448,17 +448,16 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
 
             let (mut rhs, new_pos) = unary().parse_at(input, new_pos)?;
 
-            let (new_pos, next_prec) = binop().parse_at(input, new_pos).map_or_else(
-                |_| (new_pos, -1),
-                |(cur_tok, new_pos)| (new_pos, binop_precedence[cur_tok.as_str()]),
-            );
-
             start = new_pos;
+
+            let next_prec = binop()
+                .parse_at(input, new_pos)
+                .map_or(-1, |(cur_tok, new_pos)| binop_precedence[cur_tok.as_str()]);
 
             if tok_prec < next_prec {
                 let rhs_pos_pair = binop_rhs(tok_prec + 1, rhs).parse_at(input, new_pos)?;
                 rhs = rhs_pos_pair.0;
-                start = new_pos;
+                start = rhs_pos_pair.1;
             }
 
             lhs = Expr::Binary(
