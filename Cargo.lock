@@ -6,8 +6,9 @@ version = 3
 name = "co"
 version = "0.1.0"
 dependencies = [
- "fast-float",
- "pom",
+    "fast-float",
+    "once_cell",
+    "pom",
 ]
 
 [[package]]
@@ -15,6 +16,12 @@ name = "fast-float"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95765f67b4b18863968b4a1bd5bb576f732b29a4a28c7cd84c09fa3e2875f33c"
+
+[[package]]
+name = "once_cell"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7709cef83f0c1f58f666e746a08b21e0085f7440fa6a29cc194d68aac97a4225"
 
 [[package]]
 name = "pom"

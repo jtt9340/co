@@ -1,3 +1,4 @@
+use once_cell::sync::Lazy;
 use pom::parser::{Parser as PomParser, *};
 
 use std::collections::HashMap;
@@ -12,6 +13,21 @@ use crate::ast::{BinOp, Expr, Identifier, UnaryOp};
 pub type Parser<'a> = pom::parser::Parser<'a, char, String>;
 
 type PrecedenceScore = i16;
+
+static BINOP_PRECEDENCE: Lazy<HashMap<&str, PrecedenceScore>> = Lazy::new(|| {
+    HashMap::from([
+        ("==", 10),
+        ("!=", 10),
+        ("<", 20),
+        (">", 20),
+        ("<=", 20),
+        (">=", 20),
+        ("+", 30),
+        ("-", 30),
+        ("*", 40),
+        ("/", 40),
+    ])
+});
 
 /// Get a parser that parses the start of a single-line comment: `//`.
 fn line_start<'a>() -> PomParser<'a, char, ()> {
@@ -350,7 +366,7 @@ pub fn unary<'a>() -> PomParser<'a, char, Expr> {
                 .iter()
                 .skip(start)
                 .enumerate()
-                .find(|(idx, &chr)| !is_operator_char(chr))
+                .find(|(_, &chr)| !is_operator_char(chr))
                 .map(|(idx, _)| idx)
                 .unwrap_or_else(|| input.len() - 1);
 
@@ -378,7 +394,7 @@ pub fn unary<'a>() -> PomParser<'a, char, Expr> {
                         .iter()
                         .skip(pos)
                         .enumerate()
-                        .find(|(idx, &chr)| !chr.is_ascii_whitespace())
+                        .find(|(_, &chr)| !chr.is_ascii_whitespace())
                         .map(|(idx, _)| pos + idx)
                         .unwrap_or_else(|| input.len());
 
@@ -403,20 +419,6 @@ pub fn unary<'a>() -> PomParser<'a, char, Expr> {
 }
 
 fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, Expr> {
-    // TODO: Figure out a way to not have to create this HashMap every time the function is called
-    let binop_precedence = HashMap::from([
-        ("==", 10),
-        ("!=", 10),
-        ("<", 20),
-        (">", 20),
-        ("<=", 20),
-        (">=", 20),
-        ("+", 30),
-        ("-", 30),
-        ("*", 40),
-        ("/", 40),
-    ]);
-
     let binop = || {
         symbol(&['*'])
             | symbol(&['/'])
@@ -440,7 +442,7 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
                 Ok((bin_op, new_pos)) => (bin_op, new_pos),
                 Err(_) => return Ok((lhs, start)),
             };
-            let tok_prec = binop_precedence[bin_op.as_str()];
+            let tok_prec = BINOP_PRECEDENCE[bin_op.as_str()];
 
             if tok_prec < expr_prec {
                 return Ok((lhs, start));
@@ -452,7 +454,7 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
 
             let next_prec = binop()
                 .parse_at(input, new_pos)
-                .map_or(-1, |(cur_tok, new_pos)| binop_precedence[cur_tok.as_str()]);
+                .map_or(-1, |(cur_tok, _)| BINOP_PRECEDENCE[cur_tok.as_str()]);
 
             if tok_prec < next_prec {
                 let rhs_pos_pair = binop_rhs(tok_prec + 1, rhs).parse_at(input, new_pos)?;
@@ -479,7 +481,6 @@ pub fn expr<'a>() -> PomParser<'a, char, Expr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn str_slice_to_vec(str_slice: &str) -> Vec<char> {
         str_slice.chars().collect::<Vec<char>>()
@@ -520,5 +521,70 @@ mod tests {
         let input = &*str_slice_to_vec(r#""\SO\&H"   "#);
         let str_lit = string_lit();
         assert_eq!(str_lit.parse(input), Ok("\x0EH".into()));
+    }
+
+    #[test]
+    fn parse_exprs() {
+        let input = &*str_slice_to_vec(r#"1 + a < 9 - <- chan"#);
+        let expected = Ok(Expr::Binary(
+            BinOp::LessThan,
+            Box::new(Expr::Binary(
+                BinOp::Plus,
+                Box::new(Expr::Num(1.0)),
+                Box::new(Expr::Variable(Identifier::from("a"))),
+            )),
+            Box::new(Expr::Binary(
+                BinOp::Minus,
+                Box::new(Expr::Num(9.0)),
+                Box::new(Expr::Unary(
+                    UnaryOp::Receive,
+                    Box::new(Expr::Variable(Identifier::from("chan"))),
+                )),
+            )),
+        ));
+
+        assert_eq!(expr().parse(input), expected);
+
+        let input = &*str_slice_to_vec(r#"funFun(null == "ss" + 12, true)"#);
+        let expected = Ok(Expr::Call(
+            Identifier::from("funFun"),
+            vec![
+                Expr::Binary(
+                    BinOp::Equals,
+                    Box::new(Expr::Null),
+                    Box::new(Expr::Binary(
+                        BinOp::Plus,
+                        Box::new(Expr::Str(String::from("ss"))),
+                        Box::new(Expr::Num(12.0)),
+                    )),
+                ),
+                Expr::Bool(true),
+            ],
+        ));
+
+        assert_eq!(expr().parse(input), expected);
+
+        let input = &*str_slice_to_vec(r#"-99 - <- chan + funkyFun(a, false, "hey")"#);
+        let expected = Ok(Expr::Binary(
+            BinOp::Plus,
+            Box::new(Expr::Binary(
+                BinOp::Minus,
+                Box::new(Expr::Unary(UnaryOp::Minus, Box::new(Expr::Num(99.0)))),
+                Box::new(Expr::Unary(
+                    UnaryOp::Receive,
+                    Box::new(Expr::Variable(Identifier::from("chan"))),
+                )),
+            )),
+            Box::new(Expr::Call(
+                Identifier::from("funkyFun"),
+                vec![
+                    Expr::Variable(Identifier::from("a")),
+                    Expr::Bool(false),
+                    Expr::Str(String::from("hey")),
+                ],
+            )),
+        ));
+
+        assert_eq!(expr().parse(input), expected);
     }
 }
