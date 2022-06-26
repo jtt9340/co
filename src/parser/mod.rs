@@ -1,10 +1,16 @@
-use once_cell::sync::Lazy;
-use pom::parser::{Parser as PomParser, *};
-
 use std::collections::HashMap;
 use std::iter::once;
 
-use crate::ast::{BinOp, Expr, Identifier, Statement, UnaryOp};
+use once_cell::sync::Lazy;
+use pom::parser::{Parser as PomParser, *};
+
+use utils::*;
+
+use super::ast::{BinOp, Expr, Identifier, Statement, UnaryOp};
+
+#[cfg(test)]
+mod tests;
+mod utils;
 
 /// Type alias for a [`pom::parser::Parser`] that parses streams of [`char`]aracters and outputs
 /// [`String`]s.
@@ -12,6 +18,7 @@ use crate::ast::{BinOp, Expr, Identifier, Statement, UnaryOp};
 /// The lifetime parameter `'a` is the lifetime of the data source being parsed.
 pub type Parser<'a> = pom::parser::Parser<'a, char, String>;
 
+/// Type describing a binary operator's precedence.
 type PrecedenceScore = i16;
 
 static BINOP_PRECEDENCE: Lazy<HashMap<&str, PrecedenceScore>> = Lazy::new(|| {
@@ -52,55 +59,6 @@ fn block<'a>() -> PomParser<'a, char, ()> {
     (block_start() * comment_content) - block_end()
 }
 
-/// Get a function that takes a parser and returns a parser that recognizes `open` followed by the
-/// parser followed by `close`.
-pub(in crate::parser) fn between<'a, I, O, U, V>(
-    open: PomParser<'a, I, U>,
-    close: PomParser<'a, I, V>,
-) -> impl FnOnce(PomParser<'a, I, O>) -> PomParser<'a, I, O>
-where
-    O: 'a,
-    U: 'a,
-    V: 'a,
-{
-    |p| (open * p) - close
-}
-
-/// Apply parser `p` *zero* or more times until parser `end` succeeds or parser `p` fails, whichever
-/// occurs first. If `p` fails, returns the error that `p` gives, otherwise returns a 2-tuple where
-/// the the first item in the tuple is the list of values returned by `p`, and the second item in
-/// the tuple is the token consumed by `end`.
-fn many_until<'a, I, U, O>(
-    p: PomParser<'a, I, O>,
-    end: PomParser<'a, I, U>,
-) -> PomParser<'a, I, (Vec<O>, U)>
-where
-    O: 'a,
-    U: 'a,
-{
-    PomParser::new(move |input: &'a [I], start: usize| {
-        let mut items = Vec::new();
-        let mut pos = start;
-
-        let end_result = loop {
-            if let Ok((end_output, end_pos)) = (end.method)(input, pos) {
-                pos = end_pos;
-                break end_output;
-            }
-
-            match (p.method)(input, pos) {
-                Ok((item, item_pos)) => {
-                    items.push(item);
-                    pos = item_pos;
-                }
-                Err(e) => return Err(e),
-            }
-        };
-
-        Ok(((items, end_result), pos))
-    })
-}
-
 /// The space consumer parser. This parser dictates what's ignored while parsing source code.
 /// "Space" is anything considered whitespace by [`char::is_whitespace`]. This parser also ignores
 /// single line comments (anything starting with `//` and ending at the end of a line) and block
@@ -112,40 +70,9 @@ pub fn sc<'a>() -> PomParser<'a, char, ()> {
     (sp | line | block).repeat(0..).discard()
 }
 
-/// Get a parser that lexes input based on the given parser and what is determined to be whitespace
-/// by the [`sc`] parser. The returned lexeme is one that would be recognized by the given parser.
-pub fn lexeme<'a, T: 'a>(p: PomParser<'a, char, T>) -> PomParser<'a, char, T> {
-    p - sc()
-}
-
-/// Get a parser that parses the given verbatim string, ignoring any following whitespace.
-pub fn symbol<'a, 'b: 'a>(tag: &'b [char]) -> Parser<'a> {
-    lexeme(seq(tag)).map(|o| o.iter().collect())
-}
-
-/// Get a parser that parses a parenthesized parser. That is, a parser that wraps the given parser
-/// to expect an opening parenthesis, a string recognized by the given parser, then a closing
-/// parenthesis.
-pub(in crate::parser) fn parens<'a, O>(p: PomParser<'a, char, O>) -> PomParser<'a, char, O>
-where
-    O: 'a,
-{
-    between(lexeme(sym('(')), lexeme(sym(')')))(p)
-}
-
-/// Get a parser that parses a bracketed parser. That is, a parser that wraps the given parser to
-/// expect an opening curly bracket (`{`), a string recognized by the given parser, then a closing
-/// curly bracket (`}`).
-pub(in crate::parser) fn braces<'a, O>(p: PomParser<'a, char, O>) -> PomParser<'a, char, O>
-where
-    O: 'a,
-{
-    between(lexeme(sym('{')), lexeme(sym('}')))(p)
-}
-
-/// Get a parser that recognized the semicolon lexeme, i.e. `;`.
-pub fn semi<'a>() -> Parser<'a> {
-    symbol(&[';'])
+/// Get a parser that recognizes the semicolon lexeme, i.e. `;`.
+pub fn semi<'a>() -> PomParser<'a, char, ()> {
+    lexeme(sym(';')).discard()
 }
 
 /// Get a parser that parses identifiers: bare words that are not keywords or string literals.
@@ -309,6 +236,7 @@ pub fn number<'a>() -> PomParser<'a, char, f64> {
     ))
 }
 
+/// Get a parser that parses terms in an expression.
 fn term<'a>() -> PomParser<'a, char, Expr> {
     PomParser::new(move |input: &'a [char], start: usize| {
         // First attempt to parse null literals
@@ -348,9 +276,7 @@ fn term<'a>() -> PomParser<'a, char, Expr> {
         }
 
         // Finally, a parenthesized expression
-        if let Ok((expr, new_pos)) =
-            ((symbol(&['(']) * expr()) - symbol(&[')'])).parse_at(input, start)
-        {
+        if let Ok((expr, new_pos)) = parens(expr()).parse_at(input, start) {
             return Ok((expr, new_pos));
         }
 
@@ -367,6 +293,7 @@ fn is_operator_char(c: char) -> bool {
     !c.is_ascii_alphanumeric() && !" \"(,".contains(c)
 }
 
+/// Parse terms that are preceded by zero or more unary operators.
 pub fn unary<'a>() -> PomParser<'a, char, Expr> {
     PomParser::new(move |input: &'a [char], start: usize| {
         if let Some(&cur_tok) = input.get(start) {
@@ -479,6 +406,9 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
     })
 }
 
+/// Expression parser. An expression is one or more unary terms separated by binary operators.
+///
+/// The parsers respects precedences as declared in `BINOP_PRECEDENCE`.
 pub fn expr<'a>() -> PomParser<'a, char, Expr> {
     PomParser::new(move |input: &'a [char], start: usize| {
         let (lhs, new_pos) = unary().parse_at(input, start)?;
@@ -487,11 +417,12 @@ pub fn expr<'a>() -> PomParser<'a, char, Expr> {
 }
 
 fn control_structure(keyword: &[char]) -> PomParser<char, (Expr, Vec<Statement>)> {
-    let cond_parser = lexeme(sym('(')) * expr() - lexeme(sym(')'));
-    let body_parser = lexeme(sym('{')) * call(stmt).repeat(0..) - lexeme(sym('}'));
+    let cond_parser = parens(expr());
+    let body_parser = braces(call(stmt).repeat(0..));
     symbol(keyword) * cond_parser + body_parser
 }
 
+/// Statement parser.
 pub fn stmt<'a>() -> PomParser<'a, char, Statement> {
     let r#if =
         control_structure(&['i', 'f']).map(|(condition, body)| Statement::If { condition, body });
@@ -523,242 +454,4 @@ pub fn stmt<'a>() -> PomParser<'a, char, Statement> {
         .map(|(value, recipient)| Statement::Send(value, recipient));
     let expr_stmt = (expr() - semi()).map(Statement::Expr);
     r#if | r#while | var | r#yield | spawn | r#return | function | assign | send | expr_stmt
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn str_slice_to_vec(str_slice: &str) -> Vec<char> {
-        str_slice.chars().collect::<Vec<char>>()
-    }
-
-    #[test]
-    fn parse_ident() {
-        let input = &*str_slice_to_vec("num1   ");
-        let identifier = identifier();
-        assert_eq!(identifier.parse(input), Ok("num1".into()));
-    }
-
-    #[test]
-    fn parse_parens() {
-        let input = &*str_slice_to_vec("( num1 )  ");
-        let parens = parens(identifier());
-        assert_eq!(parens.parse(input), Ok("num1".into()));
-    }
-
-    #[test]
-    fn parse_numbers() {
-        // I want to keep each tuple that is being passed to HashMap::from on its own line for
-        // readability, but rustfmt seems to want to condense this all onto one line, so this
-        // #[rustfmt::skip] annotation is needed.
-        #[rustfmt::skip]
-        let expected = HashMap::from([
-            ("1   ", 1.0),
-            ("-12   ", -12.0)
-        ]);
-        for (num, expected) in expected {
-            let input = &*str_slice_to_vec(num);
-            assert_eq!(number().parse(input), Ok(expected));
-        }
-    }
-
-    #[test]
-    fn parse_string_literals() {
-        let input = &*str_slice_to_vec(r#""\SO\&H"   "#);
-        let str_lit = string_lit();
-        assert_eq!(str_lit.parse(input), Ok("\x0EH".into()));
-    }
-
-    #[test]
-    fn parse_exprs() {
-        let input = &*str_slice_to_vec(r#"1 + a < 9 - <- chan"#);
-        let expected = Ok(Expr::Binary(
-            BinOp::LessThan,
-            Box::new(Expr::Binary(
-                BinOp::Plus,
-                Box::new(Expr::Num(1.0)),
-                Box::new(Expr::Variable(Identifier::from("a"))),
-            )),
-            Box::new(Expr::Binary(
-                BinOp::Minus,
-                Box::new(Expr::Num(9.0)),
-                Box::new(Expr::Unary(
-                    UnaryOp::Receive,
-                    Box::new(Expr::Variable(Identifier::from("chan"))),
-                )),
-            )),
-        ));
-
-        assert_eq!(expr().parse(input), expected);
-
-        let input = &*str_slice_to_vec(r#"funFun(null == "ss" + 12, true)"#);
-        let expected = Ok(Expr::Call(
-            Identifier::from("funFun"),
-            vec![
-                Expr::Binary(
-                    BinOp::Equals,
-                    Box::new(Expr::Null),
-                    Box::new(Expr::Binary(
-                        BinOp::Plus,
-                        Box::new(Expr::Str(String::from("ss"))),
-                        Box::new(Expr::Num(12.0)),
-                    )),
-                ),
-                Expr::Bool(true),
-            ],
-        ));
-
-        assert_eq!(expr().parse(input), expected);
-
-        let input = &*str_slice_to_vec(r#"-99 - <- chan + funkyFun(a, false, "hey")"#);
-        let expected = Ok(Expr::Binary(
-            BinOp::Plus,
-            Box::new(Expr::Binary(
-                BinOp::Minus,
-                Box::new(Expr::Unary(UnaryOp::Minus, Box::new(Expr::Num(99.0)))),
-                Box::new(Expr::Unary(
-                    UnaryOp::Receive,
-                    Box::new(Expr::Variable(Identifier::from("chan"))),
-                )),
-            )),
-            Box::new(Expr::Call(
-                Identifier::from("funkyFun"),
-                vec![
-                    Expr::Variable(Identifier::from("a")),
-                    Expr::Bool(false),
-                    Expr::Str(String::from("hey")),
-                ],
-            )),
-        ));
-
-        assert_eq!(expr().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_if_stmt() {
-        let input = &*str_slice_to_vec(r#"if (name == "Joey") {}"#);
-        let expected = Ok(Statement::If {
-            condition: Expr::Binary(
-                BinOp::Equals,
-                Box::new(Expr::Variable(Identifier::from("name"))),
-                Box::new(Expr::Str(String::from("Joey"))),
-            ),
-            body: Vec::new(),
-        });
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_while_loop() {
-        let input = &*str_slice_to_vec(r#"while (name == null) {}"#);
-        let expected = Ok(Statement::While {
-            condition: Expr::Binary(
-                BinOp::Equals,
-                Box::new(Expr::Variable(Identifier::from("name"))),
-                Box::new(Expr::Null),
-            ),
-            body: Vec::new(),
-        });
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_var_decl() {
-        let input = &*str_slice_to_vec(r#"var name = "Joey";"#);
-        let expected = Ok(Statement::Variable {
-            name: Identifier::from("name"),
-            init: Expr::Str(String::from("Joey")),
-        });
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_yield_stmt() {
-        let input = &*str_slice_to_vec(r#"yield;"#);
-        let expected = Ok(Statement::Yield);
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_spawn_stmt() {
-        let input = &*str_slice_to_vec(r#"spawn pi(5000);"#);
-        let expected = Ok(Statement::Spawn(Expr::Call(
-            Identifier::from("pi"),
-            vec![Expr::Num(5000.0)],
-        )));
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_return_stmt() {
-        let input = &*str_slice_to_vec(r#"return;"#);
-        let expected = Ok(Statement::Return(None));
-
-        assert_eq!(stmt().parse(input), expected);
-
-        let input = &*str_slice_to_vec(r#"return 5;"#);
-        let expected = Ok(Statement::Return(Some(Expr::Num(5.0))));
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_func_def() {
-        let input = &*str_slice_to_vec(
-            r#"function add(a, b) {
-                return a + b;
-        }"#,
-        );
-        let expected = Ok(Statement::FunctionDefinition {
-            name: Identifier::from("add"),
-            params: vec![Identifier::from("a"), Identifier::from("b")],
-            body: vec![Statement::Return(Some(Expr::Binary(
-                BinOp::Plus,
-                Box::new(Expr::Variable(Identifier::from("a"))),
-                Box::new(Expr::Variable(Identifier::from("b"))),
-            )))],
-        });
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_assignment() {
-        let input = &*str_slice_to_vec(r#"a = 5;"#);
-        let expected = Ok(Statement::Assignment {
-            variable: Identifier::from("a"),
-            new_value: Expr::Num(5.0),
-        });
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_send_stmt() {
-        let input = &*str_slice_to_vec(r#"a + 5 -> chan;"#);
-        let expected = Ok(Statement::Send(
-            Expr::Binary(
-                BinOp::Plus,
-                Box::new(Expr::Variable(Identifier::from("a"))),
-                Box::new(Expr::Num(5.0)),
-            ),
-            Identifier::from("chan"),
-        ));
-
-        assert_eq!(stmt().parse(input), expected);
-    }
-
-    #[test]
-    fn parse_expr_stmt() {
-        let input = &*str_slice_to_vec(r#"a;"#);
-        let expected = Ok(Statement::Expr(Expr::Variable(Identifier::from("a"))));
-
-        assert_eq!(stmt().parse(input), expected);
-    }
 }
