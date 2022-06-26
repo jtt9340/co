@@ -370,7 +370,6 @@ impl fmt::Display for Statement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::array::IntoIter;
     use std::collections::HashMap;
 
     #[test]

@@ -6,9 +6,9 @@ version = 3
 name = "co"
 version = "0.1.0"
 dependencies = [
-    "fast-float",
-    "once_cell",
-    "pom",
+ "fast-float",
+ "once_cell",
+ "pom",
 ]
 
 [[package]]

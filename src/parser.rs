@@ -4,7 +4,7 @@ use pom::parser::{Parser as PomParser, *};
 use std::collections::HashMap;
 use std::iter::once;
 
-use crate::ast::{BinOp, Expr, Identifier, UnaryOp};
+use crate::ast::{BinOp, Expr, Identifier, Statement, UnaryOp};
 
 /// Type alias for a [`pom::parser::Parser`] that parses streams of [`char`]aracters and outputs
 /// [`String`]s.
@@ -54,7 +54,15 @@ fn block<'a>() -> PomParser<'a, char, ()> {
 
 /// Get a function that takes a parser and returns a parser that recognizes `open` followed by the
 /// parser followed by `close`.
-fn between<'a>(open: Parser<'a>, close: Parser<'a>) -> impl FnOnce(Parser<'a>) -> Parser<'a> {
+pub(in crate::parser) fn between<'a, I, O, U, V>(
+    open: PomParser<'a, I, U>,
+    close: PomParser<'a, I, V>,
+) -> impl FnOnce(PomParser<'a, I, O>) -> PomParser<'a, I, O>
+where
+    O: 'a,
+    U: 'a,
+    V: 'a,
+{
     |p| (open * p) - close
 }
 
@@ -118,15 +126,21 @@ pub fn symbol<'a, 'b: 'a>(tag: &'b [char]) -> Parser<'a> {
 /// Get a parser that parses a parenthesized parser. That is, a parser that wraps the given parser
 /// to expect an opening parenthesis, a string recognized by the given parser, then a closing
 /// parenthesis.
-pub fn parens(p: Parser) -> Parser {
-    between(symbol(&['(']), symbol(&[')']))(p)
+pub(in crate::parser) fn parens<'a, O>(p: PomParser<'a, char, O>) -> PomParser<'a, char, O>
+where
+    O: 'a,
+{
+    between(lexeme(sym('(')), lexeme(sym(')')))(p)
 }
 
 /// Get a parser that parses a bracketed parser. That is, a parser that wraps the given parser to
 /// expect an opening curly bracket (`{`), a string recognized by the given parser, then a closing
 /// curly bracket (`}`).
-pub fn braces(p: Parser) -> Parser {
-    between(symbol(&['{']), symbol(&['}']))(p)
+pub(in crate::parser) fn braces<'a, O>(p: PomParser<'a, char, O>) -> PomParser<'a, char, O>
+where
+    O: 'a,
+{
+    between(lexeme(sym('{')), lexeme(sym('}')))(p)
 }
 
 /// Get a parser that recognized the semicolon lexeme, i.e. `;`.
@@ -323,14 +337,8 @@ fn term<'a>() -> PomParser<'a, char, Expr> {
         }
 
         // Then a function call expression
-        let args = (expr().opt() + (lexeme(sym(',')) * expr()).repeat(0..)).map(|(fst, rest)| {
-            fst.into_iter()
-                .chain(rest.into_iter())
-                .collect::<Vec<Expr>>()
-        });
-        if let Ok(((func, args), new_pos)) =
-            ((identifier() - symbol(&['('])) + (args - symbol(&[')']))).parse_at(input, start)
-        {
+        let args = list(expr(), lexeme(sym(',')));
+        if let Ok(((func, args), new_pos)) = (identifier() + parens(args)).parse_at(input, start) {
             return Ok((Expr::Call(func, args), new_pos));
         }
 
@@ -377,7 +385,7 @@ pub fn unary<'a>() -> PomParser<'a, char, Expr> {
             let mut index = 0;
             loop {
                 let pos = start + index;
-                if index == term_idx + 1 {
+                if pos == term_idx + 1 {
                     return Err(pom::Error::Mismatch {
                         message: format!(
                             "Unrecognized unary operator: {:?}",
@@ -476,6 +484,45 @@ pub fn expr<'a>() -> PomParser<'a, char, Expr> {
         let (lhs, new_pos) = unary().parse_at(input, start)?;
         binop_rhs(0, lhs).parse_at(input, new_pos)
     })
+}
+
+fn control_structure(keyword: &[char]) -> PomParser<char, (Expr, Vec<Statement>)> {
+    let cond_parser = lexeme(sym('(')) * expr() - lexeme(sym(')'));
+    let body_parser = lexeme(sym('{')) * call(stmt).repeat(0..) - lexeme(sym('}'));
+    symbol(keyword) * cond_parser + body_parser
+}
+
+pub fn stmt<'a>() -> PomParser<'a, char, Statement> {
+    let r#if =
+        control_structure(&['i', 'f']).map(|(condition, body)| Statement::If { condition, body });
+    let r#while = control_structure(&['w', 'h', 'i', 'l', 'e'])
+        .map(|(condition, body)| Statement::While { condition, body });
+    let var = ((symbol(&['v', 'a', 'r']) * identifier()) + (lexeme(sym('=')) * expr() - semi()))
+        .map(|(var, val)| Statement::Variable {
+            name: var,
+            init: val,
+        });
+    let r#yield = (symbol(&['y', 'i', 'e', 'l', 'd']) - semi()).map(|_| Statement::Yield);
+    let spawn = (symbol(&['s', 'p', 'a', 'w', 'n']) * expr() - semi()).map(Statement::Spawn);
+    let r#return =
+        (symbol(&['r', 'e', 't', 'u', 'r', 'n']) * expr().opt() - semi()).map(Statement::Return);
+    let function = {
+        let prototype_parser = symbol(&['f', 'u', 'n', 'c', 't', 'i', 'o', 'n']) * identifier();
+        let args_parser = parens(list(identifier(), lexeme(sym(','))));
+        let body_parser = braces(call(stmt).repeat(0..));
+        (prototype_parser + args_parser + body_parser)
+            .map(|((name, params), body)| Statement::FunctionDefinition { name, params, body })
+    };
+    let assign = (identifier() + (lexeme(sym('=')) * expr() - semi())).map(|(var, val)| {
+        Statement::Assignment {
+            variable: var,
+            new_value: val,
+        }
+    });
+    let send = (expr() + (symbol(&['-', '>']) * identifier() - semi()))
+        .map(|(value, recipient)| Statement::Send(value, recipient));
+    let expr_stmt = (expr() - semi()).map(Statement::Expr);
+    r#if | r#while | var | r#yield | spawn | r#return | function | assign | send | expr_stmt
 }
 
 #[cfg(test)]
@@ -586,5 +633,132 @@ mod tests {
         ));
 
         assert_eq!(expr().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_if_stmt() {
+        let input = &*str_slice_to_vec(r#"if (name == "Joey") {}"#);
+        let expected = Ok(Statement::If {
+            condition: Expr::Binary(
+                BinOp::Equals,
+                Box::new(Expr::Variable(Identifier::from("name"))),
+                Box::new(Expr::Str(String::from("Joey"))),
+            ),
+            body: Vec::new(),
+        });
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_while_loop() {
+        let input = &*str_slice_to_vec(r#"while (name == null) {}"#);
+        let expected = Ok(Statement::While {
+            condition: Expr::Binary(
+                BinOp::Equals,
+                Box::new(Expr::Variable(Identifier::from("name"))),
+                Box::new(Expr::Null),
+            ),
+            body: Vec::new(),
+        });
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_var_decl() {
+        let input = &*str_slice_to_vec(r#"var name = "Joey";"#);
+        let expected = Ok(Statement::Variable {
+            name: Identifier::from("name"),
+            init: Expr::Str(String::from("Joey")),
+        });
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_yield_stmt() {
+        let input = &*str_slice_to_vec(r#"yield;"#);
+        let expected = Ok(Statement::Yield);
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_spawn_stmt() {
+        let input = &*str_slice_to_vec(r#"spawn pi(5000);"#);
+        let expected = Ok(Statement::Spawn(Expr::Call(
+            Identifier::from("pi"),
+            vec![Expr::Num(5000.0)],
+        )));
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_return_stmt() {
+        let input = &*str_slice_to_vec(r#"return;"#);
+        let expected = Ok(Statement::Return(None));
+
+        assert_eq!(stmt().parse(input), expected);
+
+        let input = &*str_slice_to_vec(r#"return 5;"#);
+        let expected = Ok(Statement::Return(Some(Expr::Num(5.0))));
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_func_def() {
+        let input = &*str_slice_to_vec(
+            r#"function add(a, b) {
+                return a + b;
+        }"#,
+        );
+        let expected = Ok(Statement::FunctionDefinition {
+            name: Identifier::from("add"),
+            params: vec![Identifier::from("a"), Identifier::from("b")],
+            body: vec![Statement::Return(Some(Expr::Binary(
+                BinOp::Plus,
+                Box::new(Expr::Variable(Identifier::from("a"))),
+                Box::new(Expr::Variable(Identifier::from("b"))),
+            )))],
+        });
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_assignment() {
+        let input = &*str_slice_to_vec(r#"a = 5;"#);
+        let expected = Ok(Statement::Assignment {
+            variable: Identifier::from("a"),
+            new_value: Expr::Num(5.0),
+        });
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_send_stmt() {
+        let input = &*str_slice_to_vec(r#"a + 5 -> chan;"#);
+        let expected = Ok(Statement::Send(
+            Expr::Binary(
+                BinOp::Plus,
+                Box::new(Expr::Variable(Identifier::from("a"))),
+                Box::new(Expr::Num(5.0)),
+            ),
+            Identifier::from("chan"),
+        ));
+
+        assert_eq!(stmt().parse(input), expected);
+    }
+
+    #[test]
+    fn parse_expr_stmt() {
+        let input = &*str_slice_to_vec(r#"a;"#);
+        let expected = Ok(Statement::Expr(Expr::Variable(Identifier::from("a"))));
+
+        assert_eq!(stmt().parse(input), expected);
     }
 }
