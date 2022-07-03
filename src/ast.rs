@@ -3,6 +3,8 @@ use std::str::FromStr;
 
 pub type Identifier = String;
 
+pub type Program = Vec<Statement>;
+
 #[derive(Eq, PartialEq, Debug, Hash, Clone, Copy)]
 pub enum BinOp {
     Plus,

@@ -1,16 +1,15 @@
+#[cfg(test)]
+mod tests;
+mod utils;
+
 use std::collections::HashMap;
 use std::iter::once;
 
 use once_cell::sync::Lazy;
 use pom::parser::{Parser as PomParser, *};
 
+use super::ast::{BinOp, Expr, Identifier, Program, Statement, UnaryOp};
 use utils::*;
-
-use super::ast::{BinOp, Expr, Identifier, Statement, UnaryOp};
-
-#[cfg(test)]
-mod tests;
-mod utils;
 
 /// Type alias for a [`pom::parser::Parser`] that parses streams of [`char`]aracters and outputs
 /// [`String`]s.
@@ -302,7 +301,7 @@ pub fn unary<'a>() -> PomParser<'a, char, Expr> {
                 .skip(start)
                 .enumerate()
                 .find(|(_, &chr)| !is_operator_char(chr))
-                .map(|(idx, _)| idx)
+                .map(|(idx, _)| idx + start)
                 .unwrap_or_else(|| input.len() - 1);
 
             if !is_operator_char(cur_tok) {
@@ -323,7 +322,7 @@ pub fn unary<'a>() -> PomParser<'a, char, Expr> {
                 }
 
                 if let Ok(unary_op) =
-                    String::from_iter(input.into_iter().skip(start).take(index)).parse::<UnaryOp>()
+                    String::from_iter(input.iter().skip(start).take(index)).parse::<UnaryOp>()
                 {
                     let non_whitespace_idx = input
                         .iter()
@@ -454,4 +453,8 @@ pub fn stmt<'a>() -> PomParser<'a, char, Statement> {
         .map(|(value, recipient)| Statement::Send(value, recipient));
     let expr_stmt = (expr() - semi()).map(Statement::Expr);
     r#if | r#while | var | r#yield | spawn | r#return | function | assign | send | expr_stmt
+}
+
+pub fn program<'a>() -> PomParser<'a, char, Program> {
+    sc() * stmt().repeat(0..) - end()
 }

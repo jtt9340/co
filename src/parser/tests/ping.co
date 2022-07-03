@@ -1,0 +1,25 @@
+var chan = newChannel();
+
+function player(name) {
+  while (true) {
+    var n = <- chan;
+    if (n == "done") {
+      print(name + " done");
+      return;
+    }
+    
+    print(name + " " + n);
+    if (n > 0) {
+      n - 1 -> chan;
+    }
+    if (n == 0) {
+      print(name + " done");
+      "done" -> chan;
+      return;
+    }
+  }
+}
+
+spawn player("ping");
+spawn player("pong");
+10 -> chan;
