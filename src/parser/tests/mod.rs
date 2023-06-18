@@ -65,7 +65,7 @@ fn parse_exprs() {
 
     let input = &*str_slice_to_vec(r#"funFun(null == "ss" + 12, true)    "#);
     let expected = Ok(Expr::Call(
-        Identifier::from("funFun"),
+        Box::new(Expr::Variable(Identifier::from("funFun"))),
         vec![
             Expr::Binary(
                 BinOp::Equals,
@@ -94,13 +94,30 @@ fn parse_exprs() {
             )),
         )),
         Box::new(Expr::Call(
-            Identifier::from("funkyFun"),
+            Box::new(Expr::Variable(Identifier::from("funkyFun"))),
             vec![
                 Expr::Variable(Identifier::from("a")),
                 Expr::Bool(false),
                 Expr::Str(String::from("hey")),
             ],
         )),
+    ));
+
+    assert_eq!(expr().parse(input), expected);
+
+    let input = &*str_slice_to_vec(r#"x(1, 2)(y)("blah")()"#);
+    let expected = Ok(Expr::Call(
+        Box::new(Expr::Call(
+            Box::new(Expr::Call(
+                Box::new(Expr::Call(
+                    Box::new(Expr::Variable(Identifier::from("x"))),
+                    vec![Expr::Num(1.), Expr::Num(2.)],
+                )),
+                vec![Expr::Variable(Identifier::from("y"))],
+            )),
+            vec![Expr::Str(String::from("blah"))],
+        )),
+        vec![],
     ));
 
     assert_eq!(expr().parse(input), expected);
@@ -159,7 +176,7 @@ fn parse_yield_stmt() {
 fn parse_spawn_stmt() {
     let input = &*str_slice_to_vec(r#"spawn pi(5000);   "#);
     let expected = Ok(Statement::Spawn(Expr::Call(
-        Identifier::from("pi"),
+        Box::new(Expr::Variable(Identifier::from("pi"))),
         vec![Expr::Num(5000.0)],
     )));
 
@@ -257,7 +274,7 @@ fn parse_coroutines() {
                     ),
                     body: vec![
                         Statement::Expr(Expr::Call(
-                            Identifier::from("print"),
+                            Box::new(Expr::Variable(Identifier::from("print"))),
                             vec![Expr::Variable(Identifier::from("i"))],
                         )),
                         Statement::Yield,
@@ -274,11 +291,11 @@ fn parse_coroutines() {
             ],
         },
         Statement::Spawn(Expr::Call(
-            Identifier::from("printNums"),
+            Box::new(Expr::Variable(Identifier::from("printNums"))),
             vec![Expr::Num(1.0), Expr::Num(4.0)],
         )),
         Statement::Expr(Expr::Call(
-            Identifier::from("printNums"),
+            Box::new(Expr::Variable(Identifier::from("printNums"))),
             vec![Expr::Num(11.0), Expr::Num(15.0)],
         )),
     ]);
@@ -310,7 +327,7 @@ fn parse_fib() {
             ),
             body: vec![
                 Statement::Expr(Expr::Call(
-                    Identifier::from("print"),
+                    Box::new(Expr::Variable(Identifier::from("print"))),
                     vec![Expr::Variable(Identifier::from("a"))],
                 )),
                 Statement::Variable {
@@ -356,7 +373,7 @@ fn parse_fib() {
                 Statement::Return(Some(Expr::Binary(
                     BinOp::Plus,
                     Box::new(Expr::Call(
-                        Identifier::from("fib"),
+                        Box::new(Expr::Variable(Identifier::from("fib"))),
                         vec![Expr::Binary(
                             BinOp::Minus,
                             Box::new(Expr::Variable(Identifier::from("n"))),
@@ -364,7 +381,7 @@ fn parse_fib() {
                         )],
                     )),
                     Box::new(Expr::Call(
-                        Identifier::from("fib"),
+                        Box::new(Expr::Variable(Identifier::from("fib"))),
                         vec![Expr::Binary(
                             BinOp::Minus,
                             Box::new(Expr::Variable(Identifier::from("n"))),
@@ -386,9 +403,9 @@ fn parse_fib() {
             ),
             body: vec![
                 Statement::Expr(Expr::Call(
-                    Identifier::from("print"),
+                    Box::new(Expr::Variable(Identifier::from("print"))),
                     vec![Expr::Call(
-                        Identifier::from("fib"),
+                        Box::new(Expr::Variable(Identifier::from("fib"))),
                         vec![Expr::Variable(Identifier::from("i"))],
                     )],
                 )),
@@ -413,7 +430,10 @@ fn parse_ping() {
     let expected = Ok(vec![
         Statement::Variable {
             name: Identifier::from("chan"),
-            init: Expr::Call(Identifier::from("newChannel"), vec![]),
+            init: Expr::Call(
+                Box::new(Expr::Variable(Identifier::from("newChannel"))),
+                vec![],
+            ),
         },
         Statement::FunctionDefinition {
             name: Identifier::from("player"),
@@ -436,7 +456,7 @@ fn parse_ping() {
                         ),
                         body: vec![
                             Statement::Expr(Expr::Call(
-                                Identifier::from("print"),
+                                Box::new(Expr::Variable(Identifier::from("print"))),
                                 vec![Expr::Binary(
                                     BinOp::Plus,
                                     Box::new(Expr::Variable(Identifier::from("name"))),
@@ -447,7 +467,7 @@ fn parse_ping() {
                         ],
                     },
                     Statement::Expr(Expr::Call(
-                        Identifier::from("print"),
+                        Box::new(Expr::Variable(Identifier::from("print"))),
                         vec![Expr::Binary(
                             BinOp::Plus,
                             Box::new(Expr::Binary(
@@ -481,7 +501,7 @@ fn parse_ping() {
                         ),
                         body: vec![
                             Statement::Expr(Expr::Call(
-                                Identifier::from("print"),
+                                Box::new(Expr::Variable(Identifier::from("print"))),
                                 vec![Expr::Binary(
                                     BinOp::Plus,
                                     Box::new(Expr::Variable(Identifier::from("name"))),
@@ -499,11 +519,11 @@ fn parse_ping() {
             }],
         },
         Statement::Spawn(Expr::Call(
-            Identifier::from("player"),
+            Box::new(Expr::Variable(Identifier::from("player"))),
             vec![Expr::Str(String::from("ping"))],
         )),
         Statement::Spawn(Expr::Call(
-            Identifier::from("player"),
+            Box::new(Expr::Variable(Identifier::from("player"))),
             vec![Expr::Str(String::from("pong"))],
         )),
         Statement::Send(Expr::Num(10.0), Identifier::from("chan")),

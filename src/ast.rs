@@ -213,7 +213,15 @@ pub enum Expr {
     /// A binary operation on two expressions.
     Binary(BinOp, Box<Expr>, Box<Expr>),
     /// A function call.
-    Call(Identifier, Vec<Expr>),
+    Call(Box<Expr>, Vec<Expr>),
+    /// A lambda definition, e.g.
+    /// ```
+    /// function (a, b) { return a + b; }
+    /// ```
+    Lambda {
+        params: Vec<Identifier>,
+        body: Vec<Statement>,
+    },
 }
 
 impl fmt::Display for Expr {
@@ -251,11 +259,28 @@ impl fmt::Display for Expr {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Lambda { params, body } => {
+                f.write_str("function (")?;
+                for (idx, param) in params.into_iter().enumerate() {
+                    f.write_str(param)?;
+                    if idx < params.len() - 1 {
+                        f.write_str(", ")?;
+                    }
+                }
+                f.write_str(") {\n")?;
+                for line in body.into_iter() {
+                    let stmt_s = line.to_string();
+                    for l in stmt_s.lines() {
+                        writeln!(f, "\t{l}")?;
+                    }
+                }
+                f.write_char('}')
+            }
         }
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Statement {
     /// A statement containing a single expression, such as `1 + 2;`.
     Expr(Expr),
@@ -504,7 +529,7 @@ mod tests {
     #[test]
     fn fmt_call_expr() {
         let call = Expr::Call(
-            Identifier::from("foo"),
+            Box::new(Expr::Variable(Identifier::from("foo"))),
             vec![
                 Expr::Str(String::from("a")),
                 Expr::Variable(Identifier::from("b")),
@@ -634,7 +659,7 @@ mod tests {
     #[test]
     fn fmt_spawn() {
         let spawn = Statement::Spawn(Expr::Call(
-            Identifier::from("producer"),
+            Box::new(Expr::Variable(Identifier::from("producer"))),
             vec![Expr::Num(3.0)],
         ));
         assert_eq!(&spawn.to_string(), "spawn producer(3);");
@@ -646,7 +671,10 @@ mod tests {
             Expr::Binary(
                 BinOp::Plus,
                 Box::new(Expr::Num(1.0)),
-                Box::new(Expr::Call(Identifier::from("square"), vec![Expr::Num(3.0)])),
+                Box::new(Expr::Call(
+                    Box::new(Expr::Variable(Identifier::from("square"))),
+                    vec![Expr::Num(3.0)],
+                )),
             ),
             Identifier::from("someChannel"),
         );

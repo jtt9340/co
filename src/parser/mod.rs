@@ -1,15 +1,16 @@
-#[cfg(test)]
-mod tests;
-mod utils;
-
 use std::collections::HashMap;
 use std::iter::once;
 
 use once_cell::sync::Lazy;
 use pom::parser::{Parser as PomParser, *};
 
-use super::ast::{BinOp, Expr, Identifier, Program, Statement, UnaryOp};
 use utils::*;
+
+use super::ast::{BinOp, Expr, Identifier, Program, Statement, UnaryOp};
+
+#[cfg(test)]
+mod tests;
+mod utils;
 
 /// Type alias for a [`pom::parser::Parser`] that parses streams of [`char`]aracters and outputs
 /// [`String`]s.
@@ -235,8 +236,7 @@ pub fn number<'a>() -> PomParser<'a, char, f64> {
     ))
 }
 
-/// Get a parser that parses terms in an expression.
-fn term<'a>() -> PomParser<'a, char, Expr> {
+fn primary<'a>() -> PomParser<'a, char, Expr> {
     PomParser::new(move |input: &'a [char], start: usize| {
         // First attempt to parse null literals
         if let Ok((_null, new_pos)) = symbol(&['n', 'u', 'l', 'l']).parse_at(input, start) {
@@ -263,10 +263,12 @@ fn term<'a>() -> PomParser<'a, char, Expr> {
             return Ok((Expr::Num(num), new_pos));
         }
 
-        // Then a function call expression
-        let args = list(expr(), lexeme(sym(',')));
-        if let Ok(((func, args), new_pos)) = (identifier() + parens(args)).parse_at(input, start) {
-            return Ok((Expr::Call(func, args), new_pos));
+        // Then a function definition
+        let func_def = symbol(&['f', 'u', 'n', 'c', 't', 'i', 'o', 'n'])
+            * parens(list(identifier(), lexeme(sym(','))))
+            + braces(stmt().repeat(0..));
+        if let Ok(((params, body), new_pos)) = func_def.parse_at(input, start) {
+            return Ok((Expr::Lambda { params, body }, new_pos));
         }
 
         // Then an identifier
@@ -286,6 +288,12 @@ fn term<'a>() -> PomParser<'a, char, Expr> {
             inner: None,
         })
     })
+}
+
+/// Get a parser that parses terms in an expression.
+fn term<'a>() -> PomParser<'a, char, Expr> {
+    (primary() + (parens(list(expr(), lexeme(sym(','))))).repeat(0..))
+        .map(|(callee, args_lists)| args_lists_to_expr(callee, args_lists))
 }
 
 fn is_operator_char(c: char) -> bool {

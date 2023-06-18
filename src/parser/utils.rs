@@ -2,6 +2,8 @@
 
 use pom::parser::{Parser as PomParser, *};
 
+use crate::ast::Expr;
+
 use super::{sc, Parser};
 
 /// Get a function that takes a parser and returns a parser that recognizes `open` followed by the
@@ -82,4 +84,15 @@ where
     O: 'a,
 {
     between(lexeme(sym('{')), lexeme(sym('}')))(p)
+}
+
+pub(in crate::parser) fn args_lists_to_expr(
+    callee: Expr,
+    args_lists: impl IntoIterator<Item = Vec<Expr>>,
+) -> Expr {
+    let mut iter = args_lists.into_iter();
+    match iter.next() {
+        Some(args_list) => args_lists_to_expr(Expr::Call(Box::new(callee), args_list), iter),
+        None => callee,
+    }
 }
