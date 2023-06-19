@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::iter::once;
 
 use once_cell::sync::Lazy;
-use pom::parser::{Parser as PomParser, *};
+use pom::parser::*;
 
 use utils::*;
 
@@ -11,12 +11,6 @@ use super::ast::{BinOp, Expr, Identifier, Program, Statement, UnaryOp};
 #[cfg(test)]
 mod tests;
 mod utils;
-
-/// Type alias for a [`pom::parser::Parser`] that parses streams of [`char`]aracters and outputs
-/// [`String`]s.
-///
-/// The lifetime parameter `'a` is the lifetime of the data source being parsed.
-pub type Parser<'a> = pom::parser::Parser<'a, char, String>;
 
 /// Type describing a binary operator's precedence.
 type PrecedenceScore = i16;
@@ -37,23 +31,22 @@ static BINOP_PRECEDENCE: Lazy<HashMap<&str, PrecedenceScore>> = Lazy::new(|| {
 });
 
 /// Get a parser that parses the start of a single-line comment: `//`.
-fn line_start<'a>() -> PomParser<'a, char, ()> {
-    // TODO: Is there a way to convert an &str to an &[char] so that I can do seq("//")?
-    seq(&['/', '/']).discard()
+fn line_start<'a>() -> Parser<'a, char, ()> {
+    tag("//").discard()
 }
 
 /// Get a parser that parses the start of a block comment: `/*`.
-fn block_start<'a>() -> PomParser<'a, char, ()> {
-    seq(&['/', '*']).discard()
+fn block_start<'a>() -> Parser<'a, char, ()> {
+    tag("/*").discard()
 }
 
 /// Get a parser that parses the end of a block comment: `*/`.
-fn block_end<'a>() -> PomParser<'a, char, ()> {
-    seq(&['*', '/']).discard()
+fn block_end<'a>() -> Parser<'a, char, ()> {
+    tag("*/").discard()
 }
 
 /// Get a parser than can parse nested block comments.
-fn block<'a>() -> PomParser<'a, char, ()> {
+fn block<'a>() -> Parser<'a, char, ()> {
     let skip_comment_char = (!block_end() * any()).discard();
     let comment_content = (call(block) | skip_comment_char).repeat(0..).discard();
     (block_start() * comment_content) - block_end()
@@ -63,7 +56,7 @@ fn block<'a>() -> PomParser<'a, char, ()> {
 /// "Space" is anything considered whitespace by [`char::is_whitespace`]. This parser also ignores
 /// single line comments (anything starting with `//` and ending at the end of a line) and block
 /// comments (anything in between `/*` and `*/`). Block comments can be nested.
-pub fn sc<'a>() -> PomParser<'a, char, ()> {
+pub fn sc<'a>() -> Parser<'a, char, ()> {
     let sp = is_a(char::is_whitespace).discard();
     let line = (line_start() * many_until(any(), sym('\r').opt() * sym('\n'))).discard();
     let block = block();
@@ -71,12 +64,12 @@ pub fn sc<'a>() -> PomParser<'a, char, ()> {
 }
 
 /// Get a parser that recognizes the semicolon lexeme, i.e. `;`.
-pub fn semi<'a>() -> PomParser<'a, char, ()> {
+pub fn semi<'a>() -> Parser<'a, char, ()> {
     lexeme(sym(';')).discard()
 }
 
 /// Get a parser that parses identifiers: bare words that are not keywords or string literals.
-pub fn identifier<'a>() -> PomParser<'a, char, Identifier> {
+pub fn identifier<'a>() -> Parser<'a, char, Identifier> {
     lexeme(
         (is_a(char::is_alphabetic) + is_a(char::is_alphanumeric).repeat(0..))
             .map(|(fst, rest)| once(fst).chain(rest.into_iter()).collect()),
@@ -84,7 +77,7 @@ pub fn identifier<'a>() -> PomParser<'a, char, Identifier> {
 }
 
 /// Get a parser that parses string literals.
-pub fn string_lit<'a>() -> Parser<'a> {
+pub fn string_lit<'a>() -> Parser<'a, char, String> {
     let charesc = one_of("abfnrtv\\\"\'&").map(|esc| match esc {
         'a' => Some('\x07'),
         'b' => Some('\x08'),
@@ -138,41 +131,41 @@ pub fn string_lit<'a>() -> Parser<'a> {
         _ => panic!("Unrecognized escape sequence \\^{}", ctl),
     });
     let ascii = (sym('^') * cntrl)
-        | seq(&['N', 'U', 'L']).map(|_| Some('\0'))
-        | seq(&['S', 'O', 'H']).map(|_| Some('\x01'))
-        | seq(&['S', 'T', 'X']).map(|_| Some('\x02'))
-        | seq(&['E', 'T', 'X']).map(|_| Some('\x03'))
-        | seq(&['E', 'O', 'T']).map(|_| Some('\x04'))
-        | seq(&['E', 'N', 'Q']).map(|_| Some('\x05'))
-        | seq(&['A', 'C', 'K']).map(|_| Some('\x06'))
-        | seq(&['B', 'E', 'L']).map(|_| Some('\x07'))
-        | seq(&['B', 'S']).map(|_| Some('\x08'))
-        | seq(&['H', 'T']).map(|_| Some('\x09'))
-        | seq(&['L', 'F']).map(|_| Some('\x0A'))
-        | seq(&['V', 'T']).map(|_| Some('\x0B'))
-        | seq(&['F', 'F']).map(|_| Some('\x0C'))
-        | seq(&['C', 'R']).map(|_| Some('\x0D'))
-        | seq(&['S', 'O']).map(|_| Some('\x0E'))
-        | seq(&['S', 'I']).map(|_| Some('\x0F'))
-        | seq(&['D', 'L', 'E']).map(|_| Some('\x10'))
-        | seq(&['D', 'C', '1']).map(|_| Some('\x11'))
-        | seq(&['D', 'C', '2']).map(|_| Some('\x12'))
-        | seq(&['D', 'C', '3']).map(|_| Some('\x13'))
-        | seq(&['D', 'C', '4']).map(|_| Some('\x14'))
-        | seq(&['N', 'A', 'K']).map(|_| Some('\x15'))
-        | seq(&['S', 'Y', 'N']).map(|_| Some('\x16'))
-        | seq(&['E', 'T', 'B']).map(|_| Some('\x17'))
-        | seq(&['C', 'A', 'N']).map(|_| Some('\x18'))
-        | seq(&['E', 'M']).map(|_| Some('\x19'))
-        | seq(&['S', 'U', 'B']).map(|_| Some('\x1A'))
-        | seq(&['E', 'S', 'C']).map(|_| Some('\x1B'))
-        | seq(&['F', 'S']).map(|_| Some('\x1C'))
-        | seq(&['G', 'S']).map(|_| Some('\x1D'))
-        | seq(&['R', 'S']).map(|_| Some('\x1E'))
-        | seq(&['U', 'S']).map(|_| Some('\x1F'))
-        | seq(&['S', 'P']).map(|_| Some('\x20'))
-        | seq(&['D', 'E', 'L']).map(|_| Some('\x7F'));
-    let decimal = is_a(|c: char| c.is_digit(10))
+        | tag("NUL").map(|_| Some('\0'))
+        | tag("SOH").map(|_| Some('\x01'))
+        | tag("STX").map(|_| Some('\x02'))
+        | tag("ETX").map(|_| Some('\x03'))
+        | tag("EOT").map(|_| Some('\x04'))
+        | tag("ENQ").map(|_| Some('\x05'))
+        | tag("ACK").map(|_| Some('\x06'))
+        | tag("BEL").map(|_| Some('\x07'))
+        | tag("BS").map(|_| Some('\x08'))
+        | tag("HT").map(|_| Some('\x09'))
+        | tag("LF").map(|_| Some('\x0A'))
+        | tag("VT").map(|_| Some('\x0B'))
+        | tag("FF").map(|_| Some('\x0C'))
+        | tag("CR").map(|_| Some('\x0D'))
+        | tag("SO").map(|_| Some('\x0E'))
+        | tag("SI").map(|_| Some('\x0F'))
+        | tag("DLE").map(|_| Some('\x10'))
+        | tag("DC1").map(|_| Some('\x11'))
+        | tag("DC2").map(|_| Some('\x12'))
+        | tag("DC3").map(|_| Some('\x13'))
+        | tag("DC4").map(|_| Some('\x14'))
+        | tag("NAK").map(|_| Some('\x15'))
+        | tag("SYN").map(|_| Some('\x16'))
+        | tag("ETB").map(|_| Some('\x17'))
+        | tag("CAN").map(|_| Some('\x18'))
+        | tag("EM").map(|_| Some('\x19'))
+        | tag("SUB").map(|_| Some('\x1A'))
+        | tag("ESC").map(|_| Some('\x1B'))
+        | tag("FS").map(|_| Some('\x1C'))
+        | tag("GS").map(|_| Some('\x1D'))
+        | tag("RS").map(|_| Some('\x1E'))
+        | tag("US").map(|_| Some('\x1F'))
+        | tag("SP").map(|_| Some('\x20'))
+        | tag("DEL").map(|_| Some('\x7F'));
+    let decimal = is_a(|c: char| c.is_ascii_digit())
         .repeat(1..)
         .convert(|digits| {
             let num_digits = digits.len();
@@ -183,24 +176,32 @@ pub fn string_lit<'a>() -> Parser<'a> {
             char::try_from(dec).map(Some)
         });
     let octal = (sym('o')
-        * is_a(|c: char| c.is_digit(8)).repeat(1..).convert(|octits| {
-            let num_octits = octits.len();
-            let oct = octits.into_iter().enumerate().fold(0, |acc, (i, octit)| {
-                acc + octit.to_digit(8).expect("invalid octit")
-                    * 8u32.pow((num_octits - i - 1) as u32)
-            });
-            char::try_from(oct)
-        }))
+        * is_a(|c: char| c.is_digit(8))
+            .repeat(1..)
+            .convert(|octdigits| {
+                let num_octdigits = octdigits.len();
+                let oct = octdigits
+                    .into_iter()
+                    .enumerate()
+                    .fold(0, |acc, (i, octdigit)| {
+                        acc + octdigit.to_digit(8).expect("invalid octdigit")
+                            * 8u32.pow((num_octdigits - i - 1) as u32)
+                    });
+                char::try_from(oct)
+            }))
     .map(Some);
     let hexadecimal = (sym('x')
-        * is_a(|c: char| c.is_digit(16))
+        * is_a(|c: char| c.is_ascii_hexdigit())
             .repeat(1..)
-            .convert(|hexits| {
-                let num_hexits = hexits.len();
-                let hex = hexits.into_iter().enumerate().fold(0, |acc, (i, hexit)| {
-                    acc + hexit.to_digit(16).expect("invalid hexit")
-                        * 16u32.pow((num_hexits - i - 1) as u32)
-                });
+            .convert(|hexdigits| {
+                let num_hexdigits = hexdigits.len();
+                let hex = hexdigits
+                    .into_iter()
+                    .enumerate()
+                    .fold(0, |acc, (i, hexdigit)| {
+                        acc + hexdigit.to_digit(16).expect("invalid hexdigit")
+                            * 16u32.pow((num_hexdigits - i - 1) as u32)
+                    });
                 char::try_from(hex)
             }))
     .map(Some);
@@ -221,8 +222,8 @@ pub fn string_lit<'a>() -> Parser<'a> {
 }
 
 /// Get a parser that parses number literals.
-pub fn number<'a>() -> PomParser<'a, char, f64> {
-    lexeme(PomParser::new(
+pub fn number<'a>() -> Parser<'a, char, f64> {
+    lexeme(Parser::new(
         move |input: &'a [char], start: usize| match fast_float::parse_partial::<f64, _>(
             String::from_iter(input.iter().skip(start)),
         ) {
@@ -236,62 +237,33 @@ pub fn number<'a>() -> PomParser<'a, char, f64> {
     ))
 }
 
-fn primary<'a>() -> PomParser<'a, char, Expr> {
-    PomParser::new(move |input: &'a [char], start: usize| {
-        // First attempt to parse null literals
-        if let Ok((_null, new_pos)) = symbol(&['n', 'u', 'l', 'l']).parse_at(input, start) {
-            return Ok((Expr::Null, new_pos));
-        }
-
-        // Then "true"
-        if let Ok((_true, new_pos)) = symbol(&['t', 'r', 'u', 'e']).parse_at(input, start) {
-            return Ok((Expr::Bool(true), new_pos));
-        }
-
-        // Then "false"
-        if let Ok((_false, new_pos)) = symbol(&['f', 'a', 'l', 's', 'e']).parse_at(input, start) {
-            return Ok((Expr::Bool(false), new_pos));
-        }
-
-        // Then a string literal
-        if let Ok((string, new_pos)) = string_lit().parse_at(input, start) {
-            return Ok((Expr::Str(string), new_pos));
-        }
-
-        // Then a numeric literal
-        if let Ok((num, new_pos)) = number().parse_at(input, start) {
-            return Ok((Expr::Num(num), new_pos));
-        }
-
-        // Then a function definition
-        let func_def = symbol(&['f', 'u', 'n', 'c', 't', 'i', 'o', 'n'])
-            * parens(list(identifier(), lexeme(sym(','))))
-            + braces(stmt().repeat(0..));
-        if let Ok(((params, body), new_pos)) = func_def.parse_at(input, start) {
-            return Ok((Expr::Lambda { params, body }, new_pos));
-        }
-
-        // Then an identifier
-        if let Ok((ident, new_pos)) = identifier().parse_at(input, start) {
-            return Ok((Expr::Variable(ident), new_pos));
-        }
-
-        // Finally, a parenthesized expression
-        if let Ok((expr, new_pos)) = parens(expr()).parse_at(input, start) {
-            return Ok((expr, new_pos));
-        }
-
-        // None of the above
-        Err(pom::Error::Custom {
-            message: "Unrecognized term".into(),
-            position: start,
-            inner: None,
-        })
-    })
+fn primary<'a>() -> Parser<'a, char, Expr> {
+    // First attempt to parse null literals
+    let null = symbol("null").map(|_| Expr::Null);
+    // Then "true"
+    let r#true = symbol("true").map(|_| Expr::Bool(true));
+    // Then "false"
+    let r#false = symbol("false").map(|_| Expr::Bool(false));
+    // Then a string literal
+    let string = string_lit().map(Expr::Str);
+    // Then a numeric literal
+    let num = number().map(Expr::Num);
+    // Then a function definition
+    let func_def = {
+        let function_keyword = symbol("function");
+        let args_list = parens(list(identifier(), lexeme(sym(','))));
+        let body = braces(stmt().repeat(0..));
+        (function_keyword * args_list + body).map(|(params, body)| Expr::Lambda { params, body })
+    };
+    // Then an identifier
+    let ident = identifier().map(Expr::Variable);
+    // Finally, a parenthesized expression
+    let exp = parens(expr());
+    null | r#true | r#false | string | num | func_def | ident | exp
 }
 
 /// Get a parser that parses terms in an expression.
-fn term<'a>() -> PomParser<'a, char, Expr> {
+fn term<'a>() -> Parser<'a, char, Expr> {
     (primary() + (parens(list(expr(), lexeme(sym(','))))).repeat(0..))
         .map(|(callee, args_lists)| args_lists_to_expr(callee, args_lists))
 }
@@ -301,8 +273,8 @@ fn is_operator_char(c: char) -> bool {
 }
 
 /// Parse terms that are preceded by zero or more unary operators.
-pub fn unary<'a>() -> PomParser<'a, char, Expr> {
-    PomParser::new(move |input: &'a [char], start: usize| {
+pub fn unary<'a>() -> Parser<'a, char, Expr> {
+    Parser::new(move |input: &'a [char], start: usize| {
         if let Some(&cur_tok) = input.get(start) {
             let term_idx = input
                 .iter()
@@ -360,21 +332,22 @@ pub fn unary<'a>() -> PomParser<'a, char, Expr> {
     })
 }
 
-fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, Expr> {
-    let binop = || {
-        symbol(&['*'])
-            | symbol(&['/'])
-            | symbol(&['+'])
-            | (symbol(&['-']) - !symbol(&['>']))
-            | symbol(&['<', '='])
-            | symbol(&['>', '='])
-            | symbol(&['<'])
-            | symbol(&['>'])
-            | symbol(&['=', '='])
-            | symbol(&['!', '='])
-    };
+#[allow(clippy::precedence)]
+fn binop<'a>() -> Parser<'a, char, &'a str> {
+    symbol("*")
+        | symbol("/")
+        | symbol("+")
+        | symbol("-") - !symbol(">")
+        | symbol("<=")
+        | symbol(">=")
+        | symbol("<")
+        | symbol(">")
+        | symbol("==")
+        | symbol("!=")
+}
 
-    PomParser::new(move |input: &'a [char], mut start: usize| {
+fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> Parser<'a, char, Expr> {
+    Parser::new(move |input: &'a [char], mut start: usize| {
         let mut lhs = expr.clone();
 
         // Since a binary expression can contain multiple
@@ -384,7 +357,7 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
                 Ok((bin_op, new_pos)) => (bin_op, new_pos),
                 Err(_) => return Ok((lhs, start)),
             };
-            let tok_prec = BINOP_PRECEDENCE[bin_op.as_str()];
+            let tok_prec = BINOP_PRECEDENCE[bin_op];
 
             if tok_prec < expr_prec {
                 return Ok((lhs, start));
@@ -396,7 +369,7 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
 
             let next_prec = binop()
                 .parse_at(input, new_pos)
-                .map_or(-1, |(cur_tok, _)| BINOP_PRECEDENCE[cur_tok.as_str()]);
+                .map_or(-1, |(cur_tok, _)| BINOP_PRECEDENCE[cur_tok]);
 
             if tok_prec < next_prec {
                 let rhs_pos_pair = binop_rhs(tok_prec + 1, rhs).parse_at(input, new_pos)?;
@@ -416,36 +389,35 @@ fn binop_rhs<'a>(expr_prec: PrecedenceScore, expr: Expr) -> PomParser<'a, char, 
 /// Expression parser. An expression is one or more unary terms separated by binary operators.
 ///
 /// The parsers respects precedences as declared in `BINOP_PRECEDENCE`.
-pub fn expr<'a>() -> PomParser<'a, char, Expr> {
-    PomParser::new(move |input: &'a [char], start: usize| {
+pub fn expr<'a>() -> Parser<'a, char, Expr> {
+    Parser::new(move |input: &'a [char], start: usize| {
         let (lhs, new_pos) = unary().parse_at(input, start)?;
         binop_rhs(0, lhs).parse_at(input, new_pos)
     })
 }
 
-fn control_structure(keyword: &[char]) -> PomParser<char, (Expr, Vec<Statement>)> {
+fn control_structure(keyword: &str) -> Parser<char, (Expr, Vec<Statement>)> {
     let cond_parser = parens(expr());
     let body_parser = braces(call(stmt).repeat(0..));
     symbol(keyword) * cond_parser + body_parser
 }
 
 /// Statement parser.
-pub fn stmt<'a>() -> PomParser<'a, char, Statement> {
-    let r#if =
-        control_structure(&['i', 'f']).map(|(condition, body)| Statement::If { condition, body });
-    let r#while = control_structure(&['w', 'h', 'i', 'l', 'e'])
-        .map(|(condition, body)| Statement::While { condition, body });
-    let var = ((symbol(&['v', 'a', 'r']) * identifier()) + (lexeme(sym('=')) * expr() - semi()))
-        .map(|(var, val)| Statement::Variable {
+pub fn stmt<'a>() -> Parser<'a, char, Statement> {
+    let r#if = control_structure("if").map(|(condition, body)| Statement::If { condition, body });
+    let r#while =
+        control_structure("while").map(|(condition, body)| Statement::While { condition, body });
+    let var = ((symbol("var") * identifier()) + (lexeme(sym('=')) * expr() - semi())).map(
+        |(var, val)| Statement::Variable {
             name: var,
             init: val,
-        });
-    let r#yield = (symbol(&['y', 'i', 'e', 'l', 'd']) - semi()).map(|_| Statement::Yield);
-    let spawn = (symbol(&['s', 'p', 'a', 'w', 'n']) * expr() - semi()).map(Statement::Spawn);
-    let r#return =
-        (symbol(&['r', 'e', 't', 'u', 'r', 'n']) * expr().opt() - semi()).map(Statement::Return);
+        },
+    );
+    let r#yield = (symbol("yield") - semi()).map(|_| Statement::Yield);
+    let spawn = (symbol("spawn") * expr() - semi()).map(Statement::Spawn);
+    let r#return = (symbol("return") * expr().opt() - semi()).map(Statement::Return);
     let function = {
-        let prototype_parser = symbol(&['f', 'u', 'n', 'c', 't', 'i', 'o', 'n']) * identifier();
+        let prototype_parser = symbol("function") * identifier();
         let args_parser = parens(list(identifier(), lexeme(sym(','))));
         let body_parser = braces(call(stmt).repeat(0..));
         (prototype_parser + args_parser + body_parser)
@@ -457,12 +429,12 @@ pub fn stmt<'a>() -> PomParser<'a, char, Statement> {
             new_value: val,
         }
     });
-    let send = (expr() + (symbol(&['-', '>']) * identifier() - semi()))
+    let send = (expr() + (symbol("->") * identifier() - semi()))
         .map(|(value, recipient)| Statement::Send(value, recipient));
     let expr_stmt = (expr() - semi()).map(Statement::Expr);
     r#if | r#while | var | r#yield | spawn | r#return | function | assign | send | expr_stmt
 }
 
-pub fn program<'a>() -> PomParser<'a, char, Program> {
+pub fn program<'a>() -> Parser<'a, char, Program> {
     sc() * stmt().repeat(0..) - end()
 }

@@ -1,17 +1,17 @@
 //! Helper functions for parsing.
 
-use pom::parser::{Parser as PomParser, *};
+use pom::parser::*;
 
 use crate::ast::Expr;
 
-use super::{sc, Parser};
+use super::sc;
 
 /// Get a function that takes a parser and returns a parser that recognizes `open` followed by the
 /// parser followed by `close`.
 pub(in crate::parser) fn between<'a, I, O, U, V>(
-    open: PomParser<'a, I, U>,
-    close: PomParser<'a, I, V>,
-) -> impl FnOnce(PomParser<'a, I, O>) -> PomParser<'a, I, O>
+    open: Parser<'a, I, U>,
+    close: Parser<'a, I, V>,
+) -> impl FnOnce(Parser<'a, I, O>) -> Parser<'a, I, O>
 where
     O: 'a,
     U: 'a,
@@ -25,14 +25,14 @@ where
 /// the the first item in the tuple is the list of values returned by `p`, and the second item in
 /// the tuple is the token consumed by `end`.
 pub(in crate::parser) fn many_until<'a, I, U, O>(
-    p: PomParser<'a, I, O>,
-    end: PomParser<'a, I, U>,
-) -> PomParser<'a, I, (Vec<O>, U)>
+    p: Parser<'a, I, O>,
+    end: Parser<'a, I, U>,
+) -> Parser<'a, I, (Vec<O>, U)>
 where
     O: 'a,
     U: 'a,
 {
-    PomParser::new(move |input: &'a [I], start: usize| {
+    Parser::new(move |input: &'a [I], start: usize| {
         let mut items = Vec::new();
         let mut pos = start;
 
@@ -57,19 +57,19 @@ where
 
 /// Get a parser that lexes input based on the given parser and what is determined to be whitespace
 /// by the [`sc`] parser. The returned lexeme is one that would be recognized by the given parser.
-pub(in crate::parser) fn lexeme<'a, T: 'a>(p: PomParser<'a, char, T>) -> PomParser<'a, char, T> {
+pub(in crate::parser) fn lexeme<'a, T: 'a>(p: Parser<'a, char, T>) -> Parser<'a, char, T> {
     p - sc()
 }
 
 /// Get a parser that parses the given verbatim string, ignoring any following whitespace.
-pub(in crate::parser) fn symbol<'a, 'b: 'a>(tag: &'b [char]) -> Parser<'a> {
-    lexeme(seq(tag)).map(|o| o.iter().collect())
+pub(in crate::parser) fn symbol(s: &str) -> Parser<char, &str> {
+    lexeme(tag(s))
 }
 
 /// Get a parser that parses a parenthesized parser. That is, a parser that wraps the given parser
 /// to expect an opening parenthesis, a string recognized by the given parser, then a closing
 /// parenthesis.
-pub(in crate::parser) fn parens<'a, O>(p: PomParser<'a, char, O>) -> PomParser<'a, char, O>
+pub(in crate::parser) fn parens<'a, O>(p: Parser<'a, char, O>) -> Parser<'a, char, O>
 where
     O: 'a,
 {
@@ -79,7 +79,7 @@ where
 /// Get a parser that parses a bracketed parser. That is, a parser that wraps the given parser to
 /// expect an opening curly bracket (`{`), a string recognized by the given parser, then a closing
 /// curly bracket (`}`).
-pub(in crate::parser) fn braces<'a, O>(p: PomParser<'a, char, O>) -> PomParser<'a, char, O>
+pub(in crate::parser) fn braces<'a, O>(p: Parser<'a, char, O>) -> Parser<'a, char, O>
 where
     O: 'a,
 {
